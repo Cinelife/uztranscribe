@@ -438,10 +438,21 @@ async function loadVoskModel() {
     stat.textContent = '⏳ Инициализирую модель (49 МБ, подождите...)';
     const url = URL.createObjectURL(inp.files[0]);
     voskModel = await window.Vosk.createModel(url);
-    voskReady = true;
     URL.revokeObjectURL(url);
+
+    // Проверяем API — создаём тестовый recognizer
+    const testRec = new voskModel.KaldiRecognizer(16000);
+    testRec.setWords(true);
+    // Проверяем что методы существуют
+    const hasAccept  = typeof testRec.acceptWaveform === 'function';
+    const hasFinal   = typeof testRec.finalResult   === 'function';
+    testRec.delete();
+
+    if (!hasAccept || !hasFinal) throw new Error('vosk-browser API не совместим — acceptWaveform:' + hasAccept + ' finalResult:' + hasFinal);
+
+    voskReady = true;
     stat.className   = 'vstt vs-ok';
-    stat.textContent = '✅ Vosk готов: ' + inp.files[0].name;
+    stat.textContent = '✅ Vosk готов: ' + inp.files[0].name + ' (API проверен ✓)';
     btn.textContent  = '✓ Загружено';
   } catch(e) {
     stat.className   = 'vstt vs-er';
@@ -455,19 +466,35 @@ async function getVoskBoundaries(audioBuf) {
   const sr  = audioBuf.sampleRate;
   const rec = new voskModel.KaldiRecognizer(sr);
   rec.setWords(true);
+
+  // Mix to mono Float32Array
   const mono = new Float32Array(audioBuf.length);
   for (let c = 0; c < audioBuf.numberOfChannels; c++) {
     const ch = audioBuf.getChannelData(c);
     for (let i = 0; i < mono.length; i++) mono[i] += ch[i] / audioBuf.numberOfChannels;
   }
-  const BLOCK = 8192;
+
+  // Feed blocks — vosk-browser uses acceptWaveform(Float32Array), no sampleRate arg
+  const BLOCK = 4096;
   for (let i = 0; i < mono.length; i += BLOCK) {
-    rec.acceptWaveformFloat(mono.subarray(i, i + BLOCK), sr);
-    if (i % (BLOCK * 32) === 0) await sleep(0);
+    const chunk = mono.subarray(i, i + BLOCK);
+    rec.acceptWaveform(chunk);
+    if (i % (BLOCK * 64) === 0) await sleep(0); // keep UI responsive
   }
-  const words = JSON.parse(rec.finalResult(rec)).result || [];
+
+  // finalResult() — no argument in vosk-browser
+  let finalJson;
+  try {
+    finalJson = JSON.parse(rec.finalResult());
+  } catch(e) {
+    // some builds return result directly
+    finalJson = rec.finalResult();
+  }
   rec.delete();
+
+  const words = (finalJson && finalJson.result) || [];
   if (!words.length) return null;
+
   const chunks = [], GAP = 0.35, MAX = 40;
   let t0 = words[0].start, t1 = words[0].end;
   for (let i = 1; i < words.length; i++) {
