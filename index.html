@@ -458,62 +458,57 @@ async function loadVoskModel() {
 }
 
 async function getVoskBoundaries(audioBuf) {
-  const rec = new voskModel.KaldiRecognizer(audioBuf.sampleRate);
-  rec.setWords(true);
+  return new Promise(async (resolve) => {
+    const rec = new voskModel.KaldiRecognizer(audioBuf.sampleRate);
+    rec.setWords(true);
 
-  const CHUNK_SEC = 10;
-  const sr        = audioBuf.sampleRate;
-  const total     = audioBuf.duration;
-  const allWords  = [];
+    const allWords = [];
 
-  for (let t = 0; t < total; t += CHUNK_SEC) {
-    const t1  = Math.min(t + CHUNK_SEC, total);
-    const len = Math.floor((t1 - t) * sr);
+    // vosk-browser: результаты приходят через события
+    rec.on('result', (msg) => {
+      const words = (msg && msg.result && msg.result.result) || [];
+      for (const w of words) allWords.push(w);
+    });
+    rec.on('partialresult', () => {}); // игнорируем partial
 
-    // Рендерим кусок через OfflineAudioContext
-    const ctx = new OfflineAudioContext(audioBuf.numberOfChannels, len, sr);
-    const src = ctx.createBufferSource();
-    src.buffer = audioBuf;
-    src.connect(ctx.destination);
-    src.start(0, t, t1 - t);
-    const chunk = await ctx.startRendering();
+    const CHUNK_SEC = 5;
+    const sr        = audioBuf.sampleRate;
+    const total     = audioBuf.duration;
 
-    // acceptWaveform возвращает результат напрямую
-    const res = rec.acceptWaveform(chunk);
-    const words = (res && res.result) || [];
-    for (const w of words) {
-      allWords.push({ start: t + w.start, end: t + w.end });
+    for (let t = 0; t < total; t += CHUNK_SEC) {
+      const t1  = Math.min(t + CHUNK_SEC, total);
+      const len = Math.floor((t1 - t) * sr);
+      const ctx = new OfflineAudioContext(audioBuf.numberOfChannels, len, sr);
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(ctx.destination);
+      src.start(0, t, t1 - t);
+      const chunk = await ctx.startRendering();
+      rec.acceptWaveform(chunk);
+      await sleep(50); // даём время обработать события
     }
-    await sleep(0);
-  }
 
-  // Финальный flush
-  try {
-    const res   = rec.result();
-    const final = typeof res === 'string' ? JSON.parse(res) : (res || {});
-    const words = (final && final.result) || [];
-    const offset = Math.max(0, total - CHUNK_SEC);
-    for (const w of words) {
-      allWords.push({ start: offset + w.start, end: offset + w.end });
+    // Небольшая пауза для финального flush событий
+    await sleep(300);
+
+    log('    Vosk: слов распознано: ' + allWords.length, 'dm');
+
+    if (!allWords.length) { resolve(null); return; }
+
+    // Группируем в сегменты по паузам ≥ 0.35с
+    const chunks = [], GAP = 0.35, MAX = 40;
+    let t0 = allWords[0].start, t1 = allWords[0].end;
+    for (let i = 1; i < allWords.length; i++) {
+      const w = allWords[i];
+      if (w.start - t1 > GAP || w.end - t0 > MAX) {
+        chunks.push({ t0, t1: t1 + 0.05 });
+        t0 = w.start;
+      }
+      t1 = w.end;
     }
-  } catch(_) {}
-
-  log('    Vosk: слов распознано: ' + allWords.length, 'dm');
-  if (!allWords.length) return null;
-
-  // Группируем в сегменты по паузам ≥ 0.35с
-  const chunks = [], GAP = 0.35, MAX = 40;
-  let t0 = allWords[0].start, t1 = allWords[0].end;
-  for (let i = 1; i < allWords.length; i++) {
-    const w = allWords[i];
-    if (w.start - t1 > GAP || w.end - t0 > MAX) {
-      chunks.push({ t0, t1: t1 + 0.05 });
-      t0 = w.start;
-    }
-    t1 = w.end;
-  }
-  chunks.push({ t0, t1: t1 + 0.05 });
-  return chunks;
+    chunks.push({ t0, t1: t1 + 0.05 });
+    resolve(chunks);
+  });
 }
 
 // ══════════════════════════════════════════
