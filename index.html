@@ -536,9 +536,9 @@ async function getVoskBoundaries(file) {
     helperCtx.close();
 
     // Финальное ожидание: Worker обрабатывает асинхронно
-    // С CHUNK_SIZE=32768 (178 вызовов вместо 1424) и YIELD_DELAY=20мс Worker не перегружен
-    // 364.5с файл: 364.5 × 50 = 18.2с — достаточно
-    const finalWait = Math.max(totalDuration * 50, 3000);
+    // Покрытие 54% сигнализирует о нехватке времени для Workerа
+    // 364.5с файл: 364.5 × 75 = 27.3с (было 18.2с, теперь +50%)
+    const finalWait = Math.max(totalDuration * 75, 5000);
     setVoskProgress(100, 'Vosk Pass 1 — финализация (' + (finalWait/1000).toFixed(1) + 'с)...');
     log('    Vosk: финализация, жду ' + (finalWait/1000).toFixed(1) + 'с...', 'dm');
     await new Promise(r => setTimeout(r, finalWait));
@@ -626,7 +626,14 @@ function srtTime(s) {
   return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0') + ',' + String(ms).padStart(3,'0');
 }
 function buildSrt(segs) {
-  return segs.map((s, i) => (i+1) + '\n' + srtTime(s.start) + ' --> ' + srtTime(s.end) + '\n' + s.text.trim() + '\n').join('\n');
+  // Валидация: если end < start, поменять местами (баг из Gemini)
+  const validated = segs.map(s => {
+    if (s.end < s.start) {
+      const tmp = s.start; s.start = s.end; s.end = tmp;
+    }
+    return s;
+  });
+  return validated.map((s, i) => (i+1) + '\n' + srtTime(s.start) + ' --> ' + srtTime(s.end) + '\n' + s.text.trim() + '\n').join('\n');
 }
 function parseSRT(content) {
   return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n\n+/).map(b => {
@@ -715,6 +722,7 @@ async function geminiGenerate(key, b64, dur, langName, maxChars) {
         body: JSON.stringify({ contents: [{ parts: [{ inlineData: { mimeType: 'audio/wav', data: b64 } }, { text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 4096 } }) }
     );
     if (r.status === 429) throw new Error('Gemini 429: Квота исчерпана. Подожди час или включи биллинг.');
+    if (r.status === 503 || r.status === 504) { log('    ⚠ ' + model + ' → ' + r.status + ', пробую следующую...', 'wa'); continue; }
     if (!r.ok) { log('    ⚠ ' + model + ' → ' + r.status + ', пробую следующую...', 'wa'); continue; }
     const d    = await r.json();
     const cand = d.candidates && d.candidates[0];
@@ -1052,3 +1060,4 @@ function stopBatch() {
 </script>
 </body>
 </html>
+
