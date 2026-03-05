@@ -639,15 +639,20 @@ async function transcribeEL(file, key, lang, maxChars) {
 // ══════════════════════════════════════════
 const GM_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest'];
 
-async function geminiGenerate(key, b64, dur, langName) {
-  const prompt = 'Transcribe this audio clip in ' + langName + '. Duration is approximately ' + dur.toFixed(1) + ' seconds.\n' +
+async function geminiGenerate(key, b64, dur, langName, maxChars) {
+  maxChars = maxChars || 80;
+  const prompt =
+    'Transcribe this audio in ' + langName + '. Duration: ' + dur.toFixed(1) + ' seconds.\n' +
     'Return ONLY a JSON array. Each item: {"start": float, "end": float, "text": string}\n' +
-    'Rules:\n' +
-    '- Timestamps: seconds from 0.0 to ' + dur.toFixed(1) + '\n' +
-    '- Each segment 2-7 seconds\n' +
-    '- Do NOT translate, keep original ' + langName + '\n' +
-    '- If no speech, return []\n' +
-    'Return raw JSON only, no markdown.';
+    'STRICT RULES:\n' +
+    '- Timestamps: 0.0 to ' + dur.toFixed(1) + ' seconds\n' +
+    '- MAXIMUM ' + maxChars + ' characters per text segment — split if longer\n' +
+    '- Each segment 1–7 seconds duration\n' +
+    '- NO duplicate segments — each timestamp range appears ONCE\n' +
+    '- Do NOT translate — keep original ' + langName + '\n' +
+    '- No speech → return []\n' +
+    'Raw JSON only, no markdown, no explanation.';
+
   for (const model of GM_MODELS) {
     const r = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key,
@@ -733,7 +738,7 @@ async function transcribeGemini(file, key, lang, chunkSec, maxChars, preChunks) 
     const b64 = await blobToBase64(sliceToWav(ab, t0, t1));
     let segs = [];
     for (let att = 1; att <= 2; att++) {
-      try { segs = await geminiGenerate(key, b64, dur, langName); break; }
+      try { segs = await geminiGenerate(key, b64, dur, langName, maxChars); break; }
       catch(e) {
         if (e.message.indexOf('429') !== -1) throw e;
         if (att === 2) log('    ⚠ чанк ' + (ci+1) + ' пропущен: ' + e.message, 'wa');
@@ -747,7 +752,37 @@ async function transcribeGemini(file, key, lang, chunkSec, maxChars, preChunks) 
     }
     if (ci < chunks.length - 1) await sleep(600);
   }
-  return allSegs.filter(s => s.text);
+  // Дедупликация — убираем сегменты с одинаковым текстом И тайм-кодами
+  const seen = new Set();
+  const deduped = allSegs.filter(s => {
+    const key = s.start.toFixed(2) + '|' + s.text.trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Разбиваем слишком длинные строки по словам
+  const final = [];
+  for (const s of deduped) {
+    const txt = s.text.trim();
+    if (txt.length <= maxChars) { final.push(s); continue; }
+    const words = txt.split(' ');
+    const dur   = s.end - s.start;
+    let line = '', lineStart = s.start;
+    for (let wi = 0; wi < words.length; wi++) {
+      const w = words[wi];
+      if (line && (line + ' ' + w).length > maxChars) {
+        const lineEnd = lineStart + dur * (wi / words.length);
+        final.push({ start: lineStart, end: lineEnd, text: line });
+        line = w; lineStart = lineEnd;
+      } else {
+        line = line ? line + ' ' + w : w;
+      }
+    }
+    if (line) final.push({ start: lineStart, end: s.end, text: line });
+  }
+
+  return final.filter(s => s.text);
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
