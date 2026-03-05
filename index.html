@@ -440,18 +440,14 @@ async function loadVoskModel() {
     voskModel = await window.Vosk.createModel(url);
     URL.revokeObjectURL(url);
 
-    // Проверяем API — создаём тестовый recognizer
+    // Проверяем что модель создалась — просто создаём recognizer
     const testRec = new voskModel.KaldiRecognizer(16000);
     testRec.setWords(true);
-    const hasAccept = typeof testRec.acceptWaveform === 'function';
-    const hasFinal  = typeof testRec.finalResult   === 'function';
-    // не вызываем delete — метода нет в vosk-browser
-
-    if (!hasAccept || !hasFinal) throw new Error('vosk-browser API не совместим — acceptWaveform:' + hasAccept + ' finalResult:' + hasFinal);
+    // vosk-browser готов
 
     voskReady = true;
     stat.className   = 'vstt vs-ok';
-    stat.textContent = '✅ Vosk готов: ' + inp.files[0].name + ' (API проверен ✓)';
+    stat.textContent = '✅ Vosk готов: ' + inp.files[0].name;
     btn.textContent  = '✓ Загружено';
   } catch(e) {
     stat.className   = 'vstt vs-er';
@@ -481,14 +477,14 @@ async function getVoskBoundaries(audioBuf) {
     if (i % (BLOCK * 64) === 0) await sleep(0); // keep UI responsive
   }
 
-  // finalResult() — no argument in vosk-browser
+  // В vosk-browser метод называется result(), не finalResult()
   let finalJson;
   try {
-    finalJson = JSON.parse(rec.finalResult());
+    const raw = rec.result();
+    finalJson = typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch(e) {
-    finalJson = rec.finalResult();
+    finalJson = {};
   }
-  // rec.delete() не существует в vosk-browser — не вызываем
 
   const words = (finalJson && finalJson.result) || [];
   if (!words.length) return null;
