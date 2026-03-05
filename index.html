@@ -509,37 +509,40 @@ async function getVoskBoundaries(file) {
     // (один раз, не в цикле)
     const helperCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
 
-    // Фидим данные по чанкам — без ограничения реального времени
-    // Каждые ~200 чанков отдаём управление браузеру (чтобы UI не замерзал)
-    const YIELD_EVERY = 200;
+    // Фидим данные по чанкам без реального времени.
+    // КРИТИЧНО: yield каждые 16 чанков (~4с аудио) чтобы Vosk Web Worker
+    // успевал обработать сообщения и вернуть result события.
+    // YIELD_EVERY=200 → Worker получает все буферы но ответить не успевает → 0 слов.
+    const YIELD_EVERY = 16;
 
     for (let i = 0; i < totalSamples; i += CHUNK_SIZE) {
       if (stopFlag) break;
 
-      const end   = Math.min(i + CHUNK_SIZE, totalSamples);
-      const slice = mono.subarray(i, end);
+      const end      = Math.min(i + CHUNK_SIZE, totalSamples);
+      const slice    = mono.subarray(i, end);
+      const chunkIdx = Math.floor(i / CHUNK_SIZE);
 
-      // Создаём AudioBuffer вручную (не нужен playback)
       const buf = helperCtx.createBuffer(1, slice.length, SAMPLE_RATE);
       buf.copyToChannel(slice, 0);
       try { rec.acceptWaveform(buf); } catch(_) {}
 
-      // Прогресс
-      const pct = (end / totalSamples) * 100;
-      document.getElementById('vosk-pbar').style.width = pct + '%';
-      document.getElementById('vosk-ppct').textContent = Math.round(pct) + '%';
-
-      // Yield каждые YIELD_EVERY итераций чтобы браузер рисовал прогресс
-      if ((i / CHUNK_SIZE) % YIELD_EVERY === 0) {
+      if (chunkIdx % YIELD_EVERY === 0) {
+        const pct = (end / totalSamples) * 100;
+        document.getElementById('vosk-pbar').style.width = pct + '%';
+        document.getElementById('vosk-ppct').textContent = Math.round(pct) + '%';
+        document.getElementById('vosk-ptxt').textContent =
+          'Vosk Pass 1 — ' + Math.round(pct) + '% · ' + allWords.length + ' слов';
         await new Promise(r => setTimeout(r, 0));
       }
     }
 
     helperCtx.close();
 
-    // Небольшая пауза чтобы Vosk worker успел вернуть финальные результаты
-    setVoskProgress(100, 'Vosk Pass 1 — финализация...');
-    await new Promise(r => setTimeout(r, 800));
+    // Ждём финальные результаты — пропорционально длине файла
+    const finalWait = Math.min(Math.max(totalDuration * 150, 1500), 8000);
+    setVoskProgress(100, 'Vosk Pass 1 — финализация (' + (finalWait/1000).toFixed(1) + 'с)...');
+    log('    Vosk: финализация, жду ' + (finalWait/1000).toFixed(1) + 'с...', 'dm');
+    await new Promise(r => setTimeout(r, finalWait));
 
     log('    Vosk: слов распознано: ' + allWords.length, 'dm');
     hideVoskProgress();
