@@ -443,10 +443,9 @@ async function loadVoskModel() {
     // Проверяем API — создаём тестовый recognizer
     const testRec = new voskModel.KaldiRecognizer(16000);
     testRec.setWords(true);
-    // Проверяем что методы существуют
-    const hasAccept  = typeof testRec.acceptWaveform === 'function';
-    const hasFinal   = typeof testRec.finalResult   === 'function';
-    testRec.delete();
+    const hasAccept = typeof testRec.acceptWaveform === 'function';
+    const hasFinal  = typeof testRec.finalResult   === 'function';
+    // не вызываем delete — метода нет в vosk-browser
 
     if (!hasAccept || !hasFinal) throw new Error('vosk-browser API не совместим — acceptWaveform:' + hasAccept + ' finalResult:' + hasFinal);
 
@@ -487,10 +486,9 @@ async function getVoskBoundaries(audioBuf) {
   try {
     finalJson = JSON.parse(rec.finalResult());
   } catch(e) {
-    // some builds return result directly
     finalJson = rec.finalResult();
   }
-  rec.delete();
+  // rec.delete() не существует в vosk-browser — не вызываем
 
   const words = (finalJson && finalJson.result) || [];
   if (!words.length) return null;
