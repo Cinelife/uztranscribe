@@ -535,7 +535,9 @@ async function getVoskBoundaries(file) {
 
     helperCtx.close();
 
-    // Финальное ожидание без жёсткого потолка: 6мин файл → ~18с
+    // Финальное ожидание: Worker обрабатывает асинхронно
+    // С CHUNK_SIZE=32768 (178 вызовов вместо 1424) и YIELD_DELAY=20мс Worker не перегружен
+    // 364.5с файл: 364.5 × 50 = 18.2с — достаточно
     const finalWait = Math.max(totalDuration * 50, 3000);
     setVoskProgress(100, 'Vosk Pass 1 — финализация (' + (finalWait/1000).toFixed(1) + 'с)...');
     log('    Vosk: финализация, жду ' + (finalWait/1000).toFixed(1) + 'с...', 'dm');
