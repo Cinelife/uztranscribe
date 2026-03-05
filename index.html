@@ -458,37 +458,43 @@ async function loadVoskModel() {
 }
 
 async function getVoskBoundaries(audioBuf) {
-  const sr  = audioBuf.sampleRate;
-  const rec = new voskModel.KaldiRecognizer(sr);
+  const rec = new voskModel.KaldiRecognizer(audioBuf.sampleRate);
   rec.setWords(true);
 
-  // Mix to mono Float32Array
-  const mono = new Float32Array(audioBuf.length);
-  for (let c = 0; c < audioBuf.numberOfChannels; c++) {
-    const ch = audioBuf.getChannelData(c);
-    for (let i = 0; i < mono.length; i++) mono[i] += ch[i] / audioBuf.numberOfChannels;
-  }
+  // vosk-browser.acceptWaveform() принимает AudioBuffer напрямую, не Float32Array
+  // Для длинных файлов нарезаем на куски через OfflineAudioContext
+  const CHUNK_SEC = 10;
+  const sr        = audioBuf.sampleRate;
+  const total     = audioBuf.duration;
 
-  // Feed blocks — vosk-browser uses acceptWaveform(Float32Array), no sampleRate arg
-  const BLOCK = 4096;
-  for (let i = 0; i < mono.length; i += BLOCK) {
-    const chunk = mono.subarray(i, i + BLOCK);
+  for (let t = 0; t < total; t += CHUNK_SEC) {
+    const t0  = t;
+    const t1  = Math.min(t + CHUNK_SEC, total);
+    const len = Math.floor((t1 - t0) * sr);
+
+    // Создаём sub-AudioBuffer
+    const offline = new OfflineAudioContext(audioBuf.numberOfChannels, len, sr);
+    const src     = offline.createBufferSource();
+    src.buffer    = audioBuf;
+    src.connect(offline.destination);
+    src.start(0, t0, t1 - t0);
+    const chunk = await offline.startRendering();
+
     rec.acceptWaveform(chunk);
-    if (i % (BLOCK * 64) === 0) await sleep(0); // keep UI responsive
+    await sleep(0); // не блокируем UI
   }
 
-  // В vosk-browser метод называется result(), не finalResult()
-  let finalJson;
+  // Получаем финальный результат
+  let finalJson = {};
   try {
     const raw = rec.result();
-    finalJson = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch(e) {
-    finalJson = {};
-  }
+    finalJson  = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+  } catch(_) {}
 
-  const words = (finalJson && finalJson.result) || [];
+  const words = finalJson.result || [];
   if (!words.length) return null;
 
+  // Группируем слова в сегменты по паузам
   const chunks = [], GAP = 0.35, MAX = 40;
   let t0 = words[0].start, t1 = words[0].end;
   for (let i = 1; i < words.length; i++) {
