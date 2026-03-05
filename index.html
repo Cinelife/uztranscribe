@@ -461,44 +461,51 @@ async function getVoskBoundaries(audioBuf) {
   const rec = new voskModel.KaldiRecognizer(audioBuf.sampleRate);
   rec.setWords(true);
 
-  // vosk-browser.acceptWaveform() принимает AudioBuffer напрямую, не Float32Array
-  // Для длинных файлов нарезаем на куски через OfflineAudioContext
   const CHUNK_SEC = 10;
   const sr        = audioBuf.sampleRate;
   const total     = audioBuf.duration;
+  const allWords  = [];
 
   for (let t = 0; t < total; t += CHUNK_SEC) {
-    const t0  = t;
     const t1  = Math.min(t + CHUNK_SEC, total);
-    const len = Math.floor((t1 - t0) * sr);
+    const len = Math.floor((t1 - t) * sr);
 
-    // Создаём sub-AudioBuffer
-    const offline = new OfflineAudioContext(audioBuf.numberOfChannels, len, sr);
-    const src     = offline.createBufferSource();
-    src.buffer    = audioBuf;
-    src.connect(offline.destination);
-    src.start(0, t0, t1 - t0);
-    const chunk = await offline.startRendering();
+    // Рендерим кусок через OfflineAudioContext
+    const ctx = new OfflineAudioContext(audioBuf.numberOfChannels, len, sr);
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuf;
+    src.connect(ctx.destination);
+    src.start(0, t, t1 - t);
+    const chunk = await ctx.startRendering();
 
-    rec.acceptWaveform(chunk);
-    await sleep(0); // не блокируем UI
+    // acceptWaveform возвращает результат напрямую
+    const res = rec.acceptWaveform(chunk);
+    const words = (res && res.result) || [];
+    for (const w of words) {
+      allWords.push({ start: t + w.start, end: t + w.end });
+    }
+    await sleep(0);
   }
 
-  // Получаем финальный результат
-  let finalJson = {};
+  // Финальный flush
   try {
-    const raw = rec.result();
-    finalJson  = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+    const res   = rec.result();
+    const final = typeof res === 'string' ? JSON.parse(res) : (res || {});
+    const words = (final && final.result) || [];
+    const offset = Math.max(0, total - CHUNK_SEC);
+    for (const w of words) {
+      allWords.push({ start: offset + w.start, end: offset + w.end });
+    }
   } catch(_) {}
 
-  const words = finalJson.result || [];
-  if (!words.length) return null;
+  log('    Vosk: слов распознано: ' + allWords.length, 'dm');
+  if (!allWords.length) return null;
 
-  // Группируем слова в сегменты по паузам
+  // Группируем в сегменты по паузам ≥ 0.35с
   const chunks = [], GAP = 0.35, MAX = 40;
-  let t0 = words[0].start, t1 = words[0].end;
-  for (let i = 1; i < words.length; i++) {
-    const w = words[i];
+  let t0 = allWords[0].start, t1 = allWords[0].end;
+  for (let i = 1; i < allWords.length; i++) {
+    const w = allWords[i];
     if (w.start - t1 > GAP || w.end - t0 > MAX) {
       chunks.push({ t0, t1: t1 + 0.05 });
       t0 = w.start;
