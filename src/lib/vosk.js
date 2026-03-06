@@ -46,7 +46,7 @@ export async function getVoskBoundaries(file, voskModel, onLog, onProgress, hide
     }
 
     const SAMPLE_RATE  = 16000
-    const CHUNK_SIZE   = 32768   // ~2s per chunk
+    const CHUNK_SIZE   = 131072  // ~8s per chunk (faster throughput)
     const YIELD_EVERY  = 4       // yield every ~8s of audio
     const YIELD_DELAY  = 20      // ms
     const totalSamples  = audioBuf.length
@@ -92,10 +92,16 @@ export async function getVoskBoundaries(file, voskModel, onLog, onProgress, hide
 
     helperCtx.close()
 
-    const finalWait = Math.max(totalDuration * 75, 5000)
-    onProgress(100, `Vosk Pass 1 — финализация (${(finalWait/1000).toFixed(1)}с)...`)
-    onLog(`    Vosk: финализация, жду ${(finalWait/1000).toFixed(1)}с...`, 'dm')
-    await new Promise(r => setTimeout(r, finalWait))
+    // Flush final result — poll until stable, max 3s
+    onProgress(100, 'Vosk — финализация...')
+    onLog(`    Vosk: финализация...`, 'dm')
+    const prevCount = allWords.length
+    await new Promise(r => setTimeout(r, 300))
+    // Try to get any remaining partial results
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 200))
+      if (allWords.length === prevCount && attempt > 2) break
+    }
 
     onLog(`    Vosk: слов распознано: ${allWords.length}`, 'dm')
     hideProgress()
@@ -124,35 +130,58 @@ export async function getVoskBoundaries(file, voskModel, onLog, onProgress, hide
   })
 }
 
-// ── v11: process a pre-sliced AudioBuffer chunk through Vosk ───────────────
-// Returns [{word, start, end}] with timestamps relative to chunk start (0-based)
-export async function getVoskWordsForBuffer(audioBuf, voskModel) {
-  const { KaldiRecognizer } = await import('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js')
-  const sr = audioBuf.sampleRate
-  const rec = new KaldiRecognizer(voskModel, sr)
-  rec.setWords(true)
+// ── v11: get ALL words from whole file (reuses already-loaded model) ────────
+export async function getVoskAllWords(file, voskModel, onProgress, onLog) {
+  const arrayBuf = await file.arrayBuffer()
+  const tmpCtx = new AudioContext({ sampleRate: 16000 })
+  const audioBuf = await tmpCtx.decodeAudioData(arrayBuf)
+  tmpCtx.close()
 
-  const YIELD_EVERY = 4 // yield every ~8s of audio at 2s chunks
-  const data = audioBuf.getChannelData(0)
-  const CHUNK = sr * 2 // 2s chunks
-  let yieldCount = 0
-  const words = []
+  const SAMPLE_RATE = 16000
+  const CHUNK_SIZE  = 131072  // ~8s chunks for faster throughput
+  const YIELD_EVERY = 2
+  const totalSamples  = audioBuf.length
+  const totalDuration = audioBuf.duration
 
-  for (let off = 0; off < data.length; off += CHUNK) {
-    const slice = data.slice(off, Math.min(off + CHUNK, data.length))
-    const buf16 = new Int16Array(slice.length)
-    for (let i = 0; i < slice.length; i++) buf16[i] = Math.max(-32768, Math.min(32767, slice[i] * 32767))
-
-    rec.acceptWaveform(buf16)
-
-    if (++yieldCount % YIELD_EVERY === 0) await new Promise(r => setTimeout(r, 0))
+  // Mono mix
+  const nc   = audioBuf.numberOfChannels
+  const mono = new Float32Array(totalSamples)
+  for (let c = 0; c < nc; c++) {
+    const ch = audioBuf.getChannelData(c)
+    for (let i = 0; i < totalSamples; i++) mono[i] += ch[i] / nc
   }
 
-  // Final result
-  const final = rec.finalResult(rec)
-  const result = typeof final === 'string' ? JSON.parse(final) : final
-  if (result?.result) words.push(...result.result)
+  const allWords = []
+  const rec = new voskModel.KaldiRecognizer(SAMPLE_RATE)
+  rec.setWords(true)
+  rec.on('result', msg => {
+    for (const w of (msg?.result?.result || [])) allWords.push(w)
+  })
+  rec.on('partialresult', () => {})
 
-  rec.free?.()
-  return words.map(w => ({ word: w.word, start: w.start, end: w.end }))
+  const helperCtx = new AudioContext({ sampleRate: SAMPLE_RATE })
+  let chunkIdx = 0
+  for (let i = 0; i < totalSamples; i += CHUNK_SIZE) {
+    const end = Math.min(i + CHUNK_SIZE, totalSamples)
+    const buf = helperCtx.createBuffer(1, end - i, SAMPLE_RATE)
+    buf.copyToChannel(mono.subarray(i, end), 0)
+    try { rec.acceptWaveform(buf) } catch (_) {}
+    if (chunkIdx++ % YIELD_EVERY === 0) {
+      const pct = end / totalSamples * 100
+      onProgress && onProgress(pct, `Vosk: ${Math.round(pct)}% · ${allWords.length} слов`)
+      await new Promise(r => setTimeout(r, 10))
+    }
+  }
+  helperCtx.close()
+
+  // Short poll for final results — no artificial wait
+  onLog && onLog(`    Vosk: финализация...`, 'dm')
+  const before = allWords.length
+  for (let a = 0; a < 15; a++) {
+    await new Promise(r => setTimeout(r, 200))
+    if (allWords.length === before && a > 2) break
+  }
+
+  onLog && onLog(`    Vosk: ${allWords.length} слов (${totalDuration.toFixed(0)}с аудио)`, 'ok')
+  return allWords.map(w => ({ word: w.word, start: w.start, end: w.end }))
 }
