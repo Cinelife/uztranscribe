@@ -222,3 +222,73 @@ export async function translateBatch(segs, pair, key) {
   }
   throw new Error('Все модели Gemini недоступны')
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// v11 — ANCHOR PROMPT: Vosk gives timestamps, Gemini writes text only
+// ══════════════════════════════════════════════════════════════════════════════
+
+export function buildAnchorPrompt(segsWithId, langName, dur) {
+  return (
+    `You are transcribing ${langName} audio (${dur.toFixed(1)}s).\n` +
+    `I already know the EXACT timestamps from acoustic analysis.\n` +
+    `Your job is ONLY to write the spoken text for each segment.\n` +
+    `DO NOT change timestamps. DO NOT skip segments. Include repetitions.\n\n` +
+    `Segments:\n${JSON.stringify(segsWithId.map(s => ({ id: s.id, start: s.start, end: s.end })))}\n\n` +
+    `Return ONLY JSON array: [{"id":1,"text":"..."},{"id":2,"text":"..."},...]\n` +
+    `Raw JSON, no markdown, no explanation.`
+  )
+}
+
+export async function geminiAnchoredRequest(key, b64, segsWithId, langName, dur, onLog) {
+  const LANG_MAP_V11 = { uz: 'Uzbek', ru: 'Russian', en: 'English', kk: 'Kazakh', tg: 'Tajik' }
+  const lname = LANG_MAP_V11[langName] || langName
+  const prompt = buildAnchorPrompt(segsWithId, lname, dur)
+
+  const MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']
+  const PROMPT_LEAK = /transcribe|return only|json array|no speech|raw json|markdown|duration:/i
+
+  for (const model of MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`
+    const body = {
+      contents: [{ parts: [
+        { inline_data: { mime_type: 'audio/wav', data: b64 } },
+        { text: prompt }
+      ]}],
+      generationConfig: { temperature: 0, maxOutputTokens: 2048 }
+    }
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (r.status === 429) continue
+      if (!r.ok) continue
+      const d = await r.json()
+      const raw = (d.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim()
+      if (!raw) continue
+
+      let parsed
+      try {
+        let s = raw
+        if (s.startsWith('```')) { s = s.split('```')[1]; if (s.startsWith('json')) s = s.slice(4) }
+        parsed = JSON.parse(s.trim())
+      } catch (_) {
+        const m = raw.match(/\[[\s\S]*\]/)
+        if (m) try { parsed = JSON.parse(m[0]) } catch (_) { continue }
+        else continue
+      }
+
+      if (!Array.isArray(parsed)) continue
+
+      // Merge text back into segsWithId using id
+      const textMap = {}
+      for (const item of parsed) { if (item.id != null) textMap[item.id] = item.text || '' }
+
+      return segsWithId.map(s => ({
+        start: s.start,
+        end: s.end,
+        text: (textMap[s.id] || '').trim()
+      })).filter(s => s.text && !PROMPT_LEAK.test(s.text))
+
+    } catch (_) { continue }
+  }
+  // Fallback: return segs with empty text rather than crashing
+  return segsWithId.map(s => ({ start: s.start, end: s.end, text: '' }))
+}

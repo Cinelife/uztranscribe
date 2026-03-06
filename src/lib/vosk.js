@@ -123,3 +123,36 @@ export async function getVoskBoundaries(file, voskModel, onLog, onProgress, hide
     resolve(chunks)
   })
 }
+
+// ── v11: process a pre-sliced AudioBuffer chunk through Vosk ───────────────
+// Returns [{word, start, end}] with timestamps relative to chunk start (0-based)
+export async function getVoskWordsForBuffer(audioBuf, voskModel) {
+  const { KaldiRecognizer } = await import('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js')
+  const sr = audioBuf.sampleRate
+  const rec = new KaldiRecognizer(voskModel, sr)
+  rec.setWords(true)
+
+  const YIELD_EVERY = 4 // yield every ~8s of audio at 2s chunks
+  const data = audioBuf.getChannelData(0)
+  const CHUNK = sr * 2 // 2s chunks
+  let yieldCount = 0
+  const words = []
+
+  for (let off = 0; off < data.length; off += CHUNK) {
+    const slice = data.slice(off, Math.min(off + CHUNK, data.length))
+    const buf16 = new Int16Array(slice.length)
+    for (let i = 0; i < slice.length; i++) buf16[i] = Math.max(-32768, Math.min(32767, slice[i] * 32767))
+
+    rec.acceptWaveform(buf16)
+
+    if (++yieldCount % YIELD_EVERY === 0) await new Promise(r => setTimeout(r, 0))
+  }
+
+  // Final result
+  const final = rec.finalResult(rec)
+  const result = typeof final === 'string' ? JSON.parse(final) : final
+  if (result?.result) words.push(...result.result)
+
+  rec.free?.()
+  return words.map(w => ({ word: w.word, start: w.start, end: w.end }))
+}

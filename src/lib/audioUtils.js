@@ -72,3 +72,34 @@ export function buildSmartChunks(ab, targetSec) {
 }
 
 export function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+// ── v11: slice AudioBuffer without re-decoding ──────────────────────────────
+export function sliceToAudioBuffer(ab, t0, t1) {
+  const sr = ab.sampleRate
+  const s0 = Math.max(0, Math.floor(t0 * sr))
+  const s1 = Math.min(ab.length, Math.ceil(t1 * sr))
+  const len = s1 - s0
+  const ctx = new OfflineAudioContext(1, len, sr)
+  const out = ctx.createBuffer(1, len, sr)
+  const src = ab.getChannelData(0)
+  out.getChannelData(0).set(src.subarray(s0, s1))
+  return out
+}
+
+// ── v11: group Vosk words into segments by pause gaps ──────────────────────
+export function groupWordsByPauses(words, minPause = 0.3, maxSegDur = 7.0) {
+  if (!words || words.length === 0) return []
+  const segs = []
+  let segStart = words[0].start
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]
+    const next = words[i + 1]
+    const pause = next ? next.start - w.end : 999
+    const dur = w.end - segStart
+    if (pause >= minPause || dur >= maxSegDur || !next) {
+      segs.push({ start: segStart, end: w.end })
+      if (next) segStart = next.start
+    }
+  }
+  return segs
+}

@@ -6,7 +6,7 @@ export default function Header() {
       <div className="logo">🎙</div>
       <div>
         <h1>Uzbek Transcriber</h1>
-        <p>ElevenLabs · Gemini · OpenRouter → SRT + Vosk 2-pass + Перевод</p>
+        <p>ElevenLabs · Gemini · OpenRouter → SRT + Vosk v11 anchor + Перевод</p>
       </div>
       <div style={{ marginLeft:'auto', display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end', alignItems:'center' }}>
         <span className="badge bb">Batch</span>
