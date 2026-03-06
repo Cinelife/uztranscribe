@@ -100,7 +100,7 @@ export function useBatchRunner() {
 
               const textMap = await dispatchChunks({
                 audioBuf, chunks,
-                apiKey: gmKey, lang,
+                apiKey: gmKey, lang, chunkSec,
                 onLog: addLog,
                 onProgress: (pct, txt) => {
                   setProgress(((fi * totalJobs) + done + pct/100) / totalJobs * 100)
