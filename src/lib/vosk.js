@@ -138,8 +138,9 @@ export async function getVoskAllWords(file, voskModel, onProgress, onLog) {
   tmpCtx.close()
 
   const SAMPLE_RATE = 16000
-  const CHUNK_SIZE  = 131072  // ~8s chunks for faster throughput
-  const YIELD_EVERY = 2
+  const CHUNK_SIZE  = 32768   // ~2s chunks — matches working getVoskBoundaries
+  const YIELD_EVERY = 4       // yield every ~8s of audio
+  const YIELD_DELAY = 20      // ms — same as getVoskBoundaries
   const totalSamples  = audioBuf.length
   const totalDuration = audioBuf.duration
 
@@ -169,17 +170,19 @@ export async function getVoskAllWords(file, voskModel, onProgress, onLog) {
     if (chunkIdx++ % YIELD_EVERY === 0) {
       const pct = end / totalSamples * 100
       onProgress && onProgress(pct, `Vosk: ${Math.round(pct)}% · ${allWords.length} слов`)
-      await new Promise(r => setTimeout(r, 10))
+      await new Promise(r => setTimeout(r, YIELD_DELAY))
     }
   }
   helperCtx.close()
 
-  // Short poll for final results — no artificial wait
+  // Poll until words stabilize — give WASM time to emit remaining events
   onLog && onLog(`    Vosk: финализация...`, 'dm')
-  const before = allWords.length
-  for (let a = 0; a < 15; a++) {
+  let stable = 0
+  while (stable < 5) {
+    const before = allWords.length
     await new Promise(r => setTimeout(r, 200))
-    if (allWords.length === before && a > 2) break
+    if (allWords.length === before) stable++
+    else stable = 0
   }
 
   onLog && onLog(`    Vosk: ${allWords.length} слов (${totalDuration.toFixed(0)}с аудио)`, 'ok')
