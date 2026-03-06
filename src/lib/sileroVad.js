@@ -8,17 +8,25 @@
 import { NonRealTimeVAD } from '@ricky0123/vad-web'
 import * as ort from 'onnxruntime-web'
 
-// Point ort WASM to our bundled files
-ort.env.wasm.wasmPaths = '/vad/'
+// Resolve /vad/ base — works both on localhost and GitHub Pages subpath
+function vadBase() {
+  // public/vad/ is served at /vad/ relative to origin root
+  return `${location.origin}/vad/`
+}
 
 let vadInstance = null
 
 async function getVAD() {
   if (vadInstance) return vadInstance
+
+  const base = vadBase()
+
   vadInstance = await NonRealTimeVAD.new({
-    modelURL: '/vad/silero_vad_legacy.onnx',
+    modelURL: base + 'silero_vad_legacy.onnx',
     ortConfig: (o) => {
-      o.env.wasm.wasmPaths = '/vad/'
+      // Force only wasm backend — skip jsep/webgpu/webnn
+      o.env.wasm.wasmPaths = base
+      o.env.wasm.numThreads = 1
     },
     // Tunable sensitivity
     positiveSpeechThreshold: 0.5,
