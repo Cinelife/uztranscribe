@@ -15,6 +15,7 @@ export default function SettingsCard({
   maxChars, setMaxChars,
   minPause, setMinPause,
   mergeGap, setMergeGap,
+  mergeMode, setMergeMode,
   timingMode, setTimingMode,
   orModel, setOrModel,
   voskReady, setVoskReady,
@@ -126,6 +127,28 @@ export default function SettingsCard({
               </label>
               <input type="range" min="0.2" max="2.0" step="0.1" value={mergeGap}
                 onChange={e => setMergeGap(Number(e.target.value))} />
+            </div>
+          </div>
+        )}
+        {timingMode === 'v12' && (
+          <div style={{marginTop:'10px'}}>
+            <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
+              Режим сборки строк:
+            </label>
+            <div style={{display:'flex',gap:'8px'}}>
+              {[
+                ['strict',   '✂ Строгий',    'строго maxChars, резать где угодно'],
+                ['balanced', '⚖ Балансный',  'равномерная длина строк'],
+                ['sentence', '📝 По фразам', 'рвать только после . ! ?'],
+              ].map(([v, label, hint]) => (
+                <button key={v}
+                  title={hint}
+                  className={`btn tm${mergeMode===v?' on':''}`}
+                  onClick={() => setMergeMode(v)}
+                  style={{fontSize:'0.75em',padding:'4px 10px'}}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
         )}

@@ -32,7 +32,7 @@ export function useBatchRunner() {
   }, [])
 
   const startBatch = useCallback(async ({
-    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, timingMode,
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef
   }) => {
@@ -111,7 +111,7 @@ export function useBatchRunner() {
 
               // Phase 3: Assemble
               addLog(`  Phase 3 — Assembler...`, 'pu')
-              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap)
+              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode)
               const segCount   = (srtContent.match(/^\d+$/mg) || []).length
               addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')
 
