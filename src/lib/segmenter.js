@@ -4,7 +4,6 @@
  */
 
 const FRAME_MS  = 10   // energy resolution ms
-const MIN_PAUSE = 200  // ms silence to split (lowered from 250 for better sensitivity)
 const MIN_SEG   = 100  // ms minimum segment length
 
 function analyzeEnergy(channelData, sr) {
@@ -26,9 +25,9 @@ function adaptiveThreshold(frames) {
   return p10 + (p90 - p10) * 0.15
 }
 
-function detectMicroSegs(frames, audioDuration) {
+function detectMicroSegs(frames, audioDuration, minPauseMs = 200) {
   const threshold  = adaptiveThreshold(frames)
-  const minPauseF  = Math.ceil(MIN_PAUSE / FRAME_MS)
+  const minPauseF  = Math.ceil(minPauseMs / FRAME_MS)
   const minSegF    = Math.ceil(MIN_SEG   / FRAME_MS)
   const frameToSec = i => i * FRAME_MS / 1000
 
@@ -96,7 +95,7 @@ function groupIntoChunks(microSegs, chunkSec) {
   return chunks
 }
 
-export async function segmentAudio(file, chunkSec = 20, onProgress) {
+export async function segmentAudio(file, chunkSec = 20, minPause = 200, onProgress) {
   onProgress && onProgress(5, 'Segmenter: декодирование...')
 
   const arrayBuf = await file.arrayBuffer()
@@ -107,7 +106,7 @@ export async function segmentAudio(file, chunkSec = 20, onProgress) {
   const frames = analyzeEnergy(decoded.getChannelData(0), decoded.sampleRate)
 
   onProgress && onProgress(60, 'Segmenter: поиск пауз...')
-  const microSegs = detectMicroSegs(frames, decoded.duration)
+  const microSegs = detectMicroSegs(frames, decoded.duration, minPause)
 
   onProgress && onProgress(80, `Segmenter: ${microSegs.length} микро-сег → группировка по ${chunkSec}с...`)
   const rawChunks = groupIntoChunks(microSegs, chunkSec)

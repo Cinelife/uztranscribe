@@ -13,6 +13,8 @@ export default function SettingsCard({
   lang, setLang,
   chunkSec, setChunkSec,
   maxChars, setMaxChars,
+  minPause, setMinPause,
+  mergeGap, setMergeGap,
   timingMode, setTimingMode,
   orModel, setOrModel,
   voskReady, setVoskReady,
@@ -108,6 +110,25 @@ export default function SettingsCard({
           <input type="range" min="30" max="160" step="5" value={maxChars}
             onChange={e => setMaxChars(Number(e.target.value))} />
         </div>
+        {/* v12 advanced sliders */}
+        {timingMode === 'v12' && (
+          <div className="sliders-row" style={{marginTop:'8px',opacity:0.9}}>
+            <div>
+              <label>Мин. пауза: <strong style={{color:'var(--pu)'}}>{minPause}мс</strong>
+                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ меньше сег</span>
+              </label>
+              <input type="range" min="100" max="800" step="50" value={minPause}
+                onChange={e => setMinPause(Number(e.target.value))} />
+            </div>
+            <div>
+              <label>Слияние gap: <strong style={{color:'var(--pu)'}}>{mergeGap}с</strong>
+                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ длиннее строки</span>
+              </label>
+              <input type="range" min="0.2" max="2.0" step="0.1" value={mergeGap}
+                onChange={e => setMergeGap(Number(e.target.value))} />
+            </div>
+          </div>
+        )}
       </div>
 
       {prov !== 'el' && (

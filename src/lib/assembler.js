@@ -9,7 +9,7 @@ function normalize(text) {
   return text.toLowerCase().replace(/[.,!?]/g, '').replace(/\s+/g, ' ').trim()
 }
 
-export function assemble(flagMap, textMap, maxChars = 80) {
+export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5) {
   const segs = []
   for (const [flagId, times] of flagMap) {
     const text = (textMap.get(flagId) || '').trim()
@@ -40,7 +40,7 @@ export function assemble(flagMap, textMap, maxChars = 80) {
     const next     = deduped[i]
     const combined = cur.text + ' ' + next.text
     const gap      = next.start - cur.end
-    if (combined.length <= maxChars && gap < 0.5) {
+    if (combined.length <= maxChars && gap < mergeGap) {
       cur = { start: cur.start, end: next.end, text: combined }
     } else {
       merged.push(cur)

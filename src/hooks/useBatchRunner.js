@@ -32,7 +32,7 @@ export function useBatchRunner() {
   }, [])
 
   const startBatch = useCallback(async ({
-    files, prov, lang, chunkSec, maxChars, timingMode,
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, timingMode,
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef
   }) => {
@@ -88,7 +88,7 @@ export function useBatchRunner() {
               setVoskVisible(true)
 
               const { flagMap, chunks, totalMicroSegs } = await segmentAudio(
-                file, chunkSec,
+                file, chunkSec, minPause,
                 (pct, txt) => { setVoskPct(pct); setVoskText(txt) }
               )
               setVoskVisible(false)
@@ -111,7 +111,7 @@ export function useBatchRunner() {
 
               // Phase 3: Assemble
               addLog(`  Phase 3 — Assembler...`, 'pu')
-              const srtContent = assemble(flagMap, textMap, maxChars)
+              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap)
               const segCount   = (srtContent.match(/^\d+$/mg) || []).length
               addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')
 
