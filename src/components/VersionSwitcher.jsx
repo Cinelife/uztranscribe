@@ -3,45 +3,50 @@ import { createPortal } from 'react-dom'
 
 const CURRENT_VER = __APP_VERSION__
 
+// Absolute root URL of the site (works from any nested path)
+function getSiteRoot() {
+  const path = window.location.pathname
+  const idx  = path.indexOf('/versions/')
+  if (idx !== -1) {
+    return window.location.origin + path.slice(0, idx) + '/'
+  }
+  // strip trailing filename if any
+  return window.location.origin + path.replace(/[^/]+$/, '')
+}
+
 export default function VersionSwitcher() {
   const [open,     setOpen]     = useState(false)
   const [manifest, setManifest] = useState(null)
   const [loading,  setLoading]  = useState(false)
-  const [pos,      setPos]      = useState({ top:0, right:0 })
+  const [pos,      setPos]      = useState({ top: 0, right: 0 })
   const btnRef = useRef(null)
 
-  const base = import.meta.env.BASE_URL || './'
+  const siteRoot = getSiteRoot()
+  const isArchived = window.location.pathname.includes('/versions/')
 
   // Load manifest on first open
   useEffect(() => {
     if (!open || manifest) return
     setLoading(true)
-    // Always fetch from site root — works both from / and from /versions/vX/
-    const root = window.location.pathname.includes('/versions/')
-      ? window.location.href.split('/versions/')[0] + '/'
-      : base
-    fetch(`${root}versions/manifest.json?t=${Date.now()}`)
+    fetch(`${siteRoot}versions/manifest.json?t=${Date.now()}`)
       .then(r => { if (!r.ok) throw new Error(''); return r.json() })
       .then(d  => { setManifest(d); setLoading(false) })
       .catch(() => {
         setManifest({ current: CURRENT_VER, currentLabel: CURRENT_VER, currentDate: '', versions: [] })
         setLoading(false)
       })
-  }, [open, manifest, base])
+  }, [open, manifest, siteRoot])
 
-  // Compute popup position from button rect
+  // Compute popup position
   const handleOpen = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect()
-      setPos({
-        top:   r.bottom + window.scrollY + 6,
-        right: window.innerWidth - r.right
-      })
+      setPos({ top: r.bottom + window.scrollY + 6, right: window.innerWidth - r.right })
     }
     setOpen(o => !o)
   }
 
-  // Outside click
+  // Outside click closes popup
   useEffect(() => {
     if (!open) return
     const h = e => { if (btnRef.current && !btnRef.current.contains(e.target)) setOpen(false) }
@@ -49,27 +54,40 @@ export default function VersionSwitcher() {
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', h) }
   }, [open])
 
-  const isArchived = window.location.pathname.includes('/versions/')
-
   const allVersions = manifest ? [
     { id: manifest.current, label: manifest.currentLabel || manifest.current, date: manifest.currentDate, path: '', isCurrent: true },
     ...(manifest.versions || []).map(v => ({ ...v, isCurrent: false }))
   ] : []
 
+  // Determine which version is active
   const activeId = isArchived
-    ? allVersions.find(v => v.id && window.location.pathname.includes(v.id))?.id
-    : (manifest?.current || CURRENT_VER)
+    ? (() => {
+        const m = window.location.pathname.match(/\/versions\/([^/]+)\//)
+        return m ? m[1] : null
+      })()
+    : CURRENT_VER
 
   const switchTo = ver => {
-    const url = (!ver.path || ver.id === manifest?.current) ? base : `${base}${ver.path}`
-    if (url !== window.location.pathname + window.location.search) window.location.href = url
-    else setOpen(false)
+    setOpen(false)
+    let url
+    if (ver.isCurrent || !ver.path) {
+      // Always go to absolute site root for current version
+      url = siteRoot
+    } else {
+      url = siteRoot + ver.path
+    }
+    if (url !== window.location.href) window.location.href = url
   }
+
+  // Badge label
+  const badgeLabel = isArchived
+    ? `◀ ${activeId || '?'}`
+    : `v${CURRENT_VER}`
 
   const popup = open && createPortal(
     <div
       className="version-popup"
-      style={{ position:'absolute', top: pos.top, right: pos.right }}
+      style={{ position: 'absolute', top: pos.top, right: pos.right }}
       onMouseDown={e => e.stopPropagation()}
     >
       <div className="version-popup-title">ВЕРСИИ ПРОЕКТА</div>
@@ -97,10 +115,10 @@ export default function VersionSwitcher() {
         onClick={handleOpen}
         title="Переключить версию"
         className={`badge bpu${isArchived ? ' badge-archived' : ''}`}
-        style={{ cursor:'pointer', border:'none', userSelect:'none', fontFamily:'inherit' }}
+        style={{ cursor: 'pointer', border: 'none', userSelect: 'none', fontFamily: 'inherit' }}
       >
-        {isArchived ? `◀ ${activeId || '?'}` : `v${CURRENT_VER}`}
-        <span style={{ opacity:.5, fontSize:9, marginLeft:3 }}>▾</span>
+        {badgeLabel}
+        <span style={{ opacity: .5, fontSize: 9, marginLeft: 3 }}>▾</span>
       </button>
       {popup}
     </>
