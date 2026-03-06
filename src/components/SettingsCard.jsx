@@ -16,6 +16,7 @@ export default function SettingsCard({
   minPause, setMinPause,
   mergeGap, setMergeGap,
   mergeMode, setMergeMode,
+  subTiming, setSubTiming,
   timingMode, setTimingMode,
   orModel, setOrModel,
   voskReady, setVoskReady,
@@ -145,6 +146,23 @@ export default function SettingsCard({
                   title={hint}
                   className={`btn tm${mergeMode===v?' on':''}`}
                   onClick={() => setMergeMode(v)}
+                  style={{fontSize:'0.75em',padding:'4px 10px'}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginTop:'10px',marginBottom:'6px'}}>
+              Тайм-коды внутри сегмента:
+            </label>
+            <div style={{display:'flex',gap:'8px'}}>
+              {[
+                ['vad',   '📍 VAD',    'использовать границы VAD как есть (быстрее)'],
+                ['words', '📏 По словам', 'делить время сегмента пропорционально словам'],
+              ].map(([v, label, hint]) => (
+                <button key={v}
+                  title={hint}
+                  className={`btn tm${subTiming===v?' on':''}`}
+                  onClick={() => setSubTiming(v)}
                   style={{fontSize:'0.75em',padding:'4px 10px'}}>
                   {label}
                 </button>

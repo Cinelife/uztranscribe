@@ -89,7 +89,11 @@ function mergeSentence(segs, maxChars, mergeGap) {
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5, mergeMode = 'strict') {
+// subTiming modes:
+//   'vad'   — use VAD start/end as-is (default, current behaviour)
+//   'words' — split segment duration proportionally by word count
+//             (smoother subtitle timing within long segments)
+export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5, mergeMode = 'strict', subTiming = 'vad') {
   // Collect segments with text
   const segs = []
   for (const [flagId, times] of flagMap) {
@@ -101,24 +105,58 @@ export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5, mergeM
   segs.sort((a, b) => a.start - b.start)
   if (segs.length === 0) return ''
 
+  // Sub-timing: expand each segment into word-proportional sub-segments
+  if (subTiming === 'words') {
+    const expanded = []
+    for (const seg of segs) {
+      const words  = seg.text.trim().split(/\s+/)
+      const dur    = seg.end - seg.start
+      const wDur   = dur / words.length  // seconds per word
+      // Group words into lines respecting maxChars
+      let line = '', lineStart = seg.start
+      for (let wi = 0; wi < words.length; wi++) {
+        const candidate = line ? line + ' ' + words[wi] : words[wi]
+        if (candidate.length > maxChars && line) {
+          const lineWords = line.split(' ').length
+          expanded.push({ start: lineStart, end: lineStart + wDur * lineWords, text: line })
+          lineStart += wDur * lineWords
+          line = words[wi]
+        } else { line = candidate }
+      }
+      if (line) expanded.push({ start: lineStart, end: seg.end, text: line })
+    }
+    // Clamp overlaps and return directly (skip merge phase for word mode)
+    for (let i = 0; i < expanded.length - 1; i++) {
+      if (expanded[i].end > expanded[i+1].start - 0.05)
+        expanded[i].end = Math.max(expanded[i].start + 0.1, expanded[i+1].start - 0.05)
+    }
+    return buildSrt(expanded)
+  }
+
   // Dedup: sliding window of last 12 segs — catches Gemini hallucination repeats
-  const WINDOW = 12
+  // TIME GUARD: only flag as dup if segments are within 30s of each other
+  // (speaker can legitimately repeat a phrase 30s+ later — that's real content)
+  const WINDOW   = 12
+  const TIME_GAP = 30  // seconds — beyond this, repetition is allowed
   const deduped = [segs[0]]
   for (let i = 1; i < segs.length; i++) {
-    const curr = norm(segs[i].text)
+    const curr    = norm(segs[i].text)
+    const currT   = segs[i].start
     const windowStart = Math.max(0, deduped.length - WINDOW)
     const isDup = deduped.slice(windowStart).some(prev => {
+      // Skip time guard: if prev ended >30s ago, allow the repeat
+      if (currT - prev.end > TIME_GAP) return false
       const p = norm(prev.text)
-      // Exact match OR high overlap (one contains >=80% of the other)
-      if (p === curr && curr.length > 4) return true  // ignore single short words
-      // contains check: only if the shorter text has 3+ words
+      // Exact match (ignore single short words)
+      if (p === curr && curr.length > 4) return true
+      // Contains check: only if shorter text has 3+ words
       const currWords = curr.split(' ').length
-      const pWords = p.split(' ').length
+      const pWords    = p.split(' ').length
       if (Math.min(currWords, pWords) >= 3 && (p.includes(curr) || curr.includes(p))) return true
-      // Jaccard-like: word overlap ratio (only for texts with 4+ content words)
+      // Jaccard: only for 4+ content words
       const pw = new Set(p.split(' ').filter(w => w.length > 3))
       const cw = curr.split(' ').filter(w => w.length > 3)
-      if (pw.size < 4 || cw.length < 4) return false  // too short to compare
+      if (pw.size < 4 || cw.length < 4) return false
       const overlap = cw.filter(w => pw.has(w)).length
       return overlap / Math.max(pw.size, cw.length) > 0.75
     })

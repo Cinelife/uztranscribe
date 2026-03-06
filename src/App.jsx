@@ -21,6 +21,7 @@ export default function App() {
   const [minPause,   setMinPause]   = useState(500)  // ms — segmenter sensitivity
   const [mergeGap,   setMergeGap]   = useState(1.2)  // s  — assembler merge threshold
   const [mergeMode,  setMergeMode]  = useState('balanced') // strict | balanced | sentence
+  const [subTiming,  setSubTiming]  = useState('vad')      // vad | words
   const [timingMode, setTimingMode] = useState('v12')
   const [orModel,    setOrModel]    = useState(OR_MODELS[0].id)
 
@@ -47,7 +48,7 @@ export default function App() {
   } = useTranslation()
 
   const handleStart = () => startBatch({
-    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, subTiming, timingMode,
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef
   })
