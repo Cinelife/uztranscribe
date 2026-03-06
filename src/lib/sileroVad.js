@@ -1,9 +1,6 @@
 /**
  * Silero VAD — прямой ONNX без @ricky0123/vad-web
- *
- * Модель: silero_vad_legacy.onnx (1.8MB, в /public/vad/)
- * Runtime: onnxruntime-web/wasm — Vite сам копирует .wasm в /assets/
- *
+ * Runtime: onnxruntime-web/wasm (wasm-only)
  * I/O: input[1,512] float32 + sr int64 + h[2,1,64] + c[2,1,64]
  *    → output[1,1] float32 + hn[2,1,64] + cn[2,1,64]
  */
@@ -17,29 +14,25 @@ const NEG_THRESH    = 0.35
 const PRE_PAD_MS    = 96
 const REDEMPTION_MS = 256
 
-// Base URL для ONNX-модели (в /public/vad/ → /vad/ на prod)
-function modelBase() {
-  return (typeof location !== 'undefined' ? location.origin : '') + '/vad/'
-}
+// BASE_URL правильно разрешается и на localhost и на GH Pages subpath
+const MODEL_URL = import.meta.env.BASE_URL + 'vad/silero_vad_legacy.onnx'
 
 let sessionPromise = null
 
 async function getSession() {
   if (sessionPromise) return sessionPromise
   sessionPromise = (async () => {
-    // numThreads=1: без SharedArrayBuffer/COOP headers
-    // executionProviders=['wasm']: явно только wasm, никакого jsep/webgpu
-    // НЕ переопределяем wasmPaths — Vite уже поместил wasm в /assets/ с правильным URL
     ortEnv.wasm.numThreads = 1
 
-    const session = await InferenceSession.create(
-      modelBase() + 'silero_vad_legacy.onnx',
-      {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-      }
-    )
-    return session
+    // Fetch как Uint8Array — обходим ошибку "external data file"
+    const resp = await fetch(MODEL_URL)
+    if (!resp.ok) throw new Error(`Silero: ошибка ${resp.status}: ${MODEL_URL}`)
+    const modelData = new Uint8Array(await resp.arrayBuffer())
+
+    return await InferenceSession.create(modelData, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+    })
   })()
   return sessionPromise
 }
@@ -66,7 +59,7 @@ async function runVAD(samples16k) {
   let c = new Tensor('float32', new Float32Array(2 * 1 * 64), [2, 1, 64])
 
   const totalFrames  = Math.floor(samples16k.length / FRAME_SIZE)
-  const msPerFrame   = (FRAME_SIZE / TARGET_SR) * 1000  // 32ms
+  const msPerFrame   = (FRAME_SIZE / TARGET_SR) * 1000
   const prePadFrames = Math.round(PRE_PAD_MS    / msPerFrame)
   const redemptionFr = Math.round(REDEMPTION_MS / msPerFrame)
 
@@ -77,7 +70,7 @@ async function runVAD(samples16k) {
   const ring = []
 
   for (let fi = 0; fi < totalFrames; fi++) {
-    const frame  = samples16k.slice(fi * FRAME_SIZE, (fi + 1) * FRAME_SIZE)
+    const frame   = samples16k.slice(fi * FRAME_SIZE, (fi + 1) * FRAME_SIZE)
     const frameMs = fi * msPerFrame
 
     const result = await session.run({
@@ -119,10 +112,8 @@ async function runVAD(samples16k) {
   return segments
 }
 
-// ─────────────────────────────────────────────────────────────
-
 function buildFlagId(ci, si) {
-  return `${String(ci).padStart(3,'0')}$${String(si).padStart(3,'0')}`
+  return String(ci).padStart(3,'0') + '$' + String(si).padStart(3,'0')
 }
 
 function groupIntoChunks(segs, chunkSec) {
@@ -140,9 +131,11 @@ function groupIntoChunks(segs, chunkSec) {
   return chunks
 }
 
-export async function segmentAudioSilero(file, chunkSec = 25, minPause = 500, onProgress, onLog) {
-  onProgress?.(5,  'Silero VAD: инициализация...')
-  onLog?.('Silero VAD: загрузка модели...', 'dm')
+export async function segmentAudioSilero(file, chunkSec, minPause, onProgress, onLog) {
+  if (chunkSec === undefined) chunkSec = 25
+  if (minPause === undefined) minPause = 500
+  onProgress && onProgress(5,  'Silero VAD: инициализация...')
+  onLog && onLog('Silero VAD: загрузка модели...', 'dm')
 
   const arrayBuf = await file.arrayBuffer()
   const audioCtx = new OfflineAudioContext(1, 1, 16000)
@@ -150,48 +143,46 @@ export async function segmentAudioSilero(file, chunkSec = 25, minPause = 500, on
   const samples  = resampleTo16k(decoded.getChannelData(0), decoded.sampleRate)
   const duration = samples.length / TARGET_SR
 
-  onProgress?.(15, 'Silero VAD: анализ речи...')
-  onLog?.(`Silero VAD: ${duration.toFixed(1)}с → ONNX wasm...`, 'dm')
+  onProgress && onProgress(15, 'Silero VAD: анализ речи...')
+  onLog && onLog('Silero VAD: ' + duration.toFixed(1) + 'с → ONNX wasm...', 'dm')
 
   const rawSegs = await runVAD(samples)
-  onLog?.(`Silero VAD: ${rawSegs.length} сегментов`, 'dm')
-  onProgress?.(60, `Silero VAD: ${rawSegs.length} сег`)
+  onLog && onLog('Silero VAD: ' + rawSegs.length + ' сегментов', 'dm')
+  onProgress && onProgress(60, 'Silero VAD: ' + rawSegs.length + ' сег')
 
-  // Merge close segments
   const merged = []
   for (const seg of rawSegs) {
-    if (merged.length && seg.start - merged.at(-1).end < minPause) {
-      merged.at(-1).end = seg.end
+    if (merged.length && seg.start - merged[merged.length-1].end < minPause) {
+      merged[merged.length-1].end = seg.end
     } else {
-      merged.push({ ...seg })
+      merged.push({ start: seg.start, end: seg.end })
     }
   }
 
-  // Extend to audio boundaries if within 3s
   if (merged.length && merged[0].start < 3000) merged[0].start = 0
   if (merged.length) {
     const lastMs = duration * 1000
-    if (lastMs - merged.at(-1).end < 3000) merged.at(-1).end = lastMs
+    if (lastMs - merged[merged.length-1].end < 3000) merged[merged.length-1].end = lastMs
   }
 
-  onLog?.(`Silero VAD: после слияния ${merged.length} сег`, 'dm')
+  onLog && onLog('Silero VAD: после слияния ' + merged.length + ' сег', 'dm')
 
   const flagMap   = new Map()
   const rawChunks = groupIntoChunks(merged, chunkSec)
 
-  const chunks = rawChunks.map((chunk, ci) => {
-    const segs = chunk.segments.map((seg, si) => {
+  const chunks = rawChunks.map(function(chunk, ci) {
+    const segs = chunk.segments.map(function(seg, si) {
       const flagId = buildFlagId(ci, si)
       const startS = seg.start / 1000
       const endS   = seg.end   / 1000
       flagMap.set(flagId, { start: startS, end: endS })
-      return { flagId, start: startS, end: endS }
+      return { flagId: flagId, start: startS, end: endS }
     })
     return { t0: chunk.t0 / 1000, t1: chunk.t1 / 1000, segments: segs }
   })
 
-  onProgress?.(100, `Silero VAD ✓ — ${merged.length} сег → ${chunks.length} чанков`)
-  onLog?.(`Silero VAD ✓ — ${merged.length} → ${chunks.length} чанков`, 'ok')
+  onProgress && onProgress(100, 'Silero VAD ✓ — ' + merged.length + ' сег → ' + chunks.length + ' чанков')
+  onLog && onLog('Silero VAD ✓ — ' + merged.length + ' → ' + chunks.length + ' чанков', 'ok')
 
-  return { flagMap, chunks, totalMicroSegs: merged.length }
+  return { flagMap: flagMap, chunks: chunks, totalMicroSegs: merged.length }
 }
