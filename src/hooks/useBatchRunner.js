@@ -98,7 +98,7 @@ export function useBatchRunner() {
               addLog(`  Phase 2 — Dispatcher: ${chunks.length} запросов...`, 'gm-cl')
               const audioBuf = await decodeAudio(file)
 
-              const textMap = await dispatchChunks({
+              const { allText: textMap, fallbackEnds } = await dispatchChunks({
                 audioBuf, chunks,
                 apiKey: gmKey, lang, chunkSec,
                 onLog: addLog,
@@ -111,6 +111,11 @@ export function useBatchRunner() {
 
               // Phase 3: Assemble
               addLog(`  Phase 3 — Assembler...`, 'pu')
+              // Apply fallback end times to flagMap
+              for (const [fid, endTime] of fallbackEnds) {
+                const entry = flagMap.get(fid)
+                if (entry) entry.end = endTime
+              }
               const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode)
               const segCount   = (srtContent.match(/^\d+$/mg) || []).length
               addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')

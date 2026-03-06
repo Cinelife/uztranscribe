@@ -18,14 +18,17 @@ function buildPrompt(segments, langName, chunkDur, chunkSec) {
   ).join('\n')
 
   return (
-    `Transcribe this ${langName} audio clip (total: ${chunkDur.toFixed(1)}s, chunk size: ${chunkSec}s).\n\n` +
-    `It contains ${n} speech segment(s) at these exact time ranges:\n` +
+    `Transcribe this ${langName} audio clip (${chunkDur.toFixed(1)}s, chunk: ${chunkSec}s).\n\n` +
+    `It has ${n} speech segment(s) at these time ranges:\n` +
     `${list}\n\n` +
-    `For each segment, transcribe ONLY what is spoken in that time range.\n` +
-    `Return a raw JSON array of exactly ${n} strings, in order.\n` +
-    `Use "" for silent or inaudible segments.\n` +
-    `No timestamps in output, no IDs, no markdown.\n\n` +
-    `Example: ${JSON.stringify(Array(Math.min(n,3)).fill('transcribed text here'))}${n>3?',...':''}`
+    `Transcription rules:\n` +
+    `- Use full linguistic intelligence: interpret abbreviations, names, terminology correctly.\n` +
+    `- If audio repeats a phrase or chorus — transcribe it again. Repetition is real content, not an error.\n` +
+    `- Use "" only for completely silent or inaudible segments.\n\n` +
+    `Output format — non-negotiable:\n` +
+    `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
+    `- No skipping, no merging, no extra commentary — only the array.\n\n` +
+    `Example: ${JSON.stringify(Array(Math.min(n,3)).fill('...'))}${n>3?',...':''}`
   )
 }
 
@@ -84,7 +87,8 @@ export async function dispatchChunks({
   CONCURRENCY = 3
 }) {
   const langName = LANG_MAP[lang] || lang
-  const allText  = new Map()  // flagId → text
+  const allText    = new Map()  // flagId → text
+  const fallbackEnds = new Map()  // flagId → overridden end time
   let done = 0
 
   await new Promise(resolve => {
@@ -114,19 +118,35 @@ export async function dispatchChunks({
             const b64  = await blobToBase64(sliceToWav(audioBuf, t0, chunk.t1))
             let texts  = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec)
 
-            // Retry if count mismatch
-            if (texts.length !== n && texts.length > 0) {
-              onLog(`    ↻ ${label}: вернулось ${texts.length}/${n} → повтор`, 'wa')
-              await sleep(500)
-              const r2 = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec)
-              if (r2.length === n) texts = r2
-              else if (r2.length > texts.length) texts = r2
+            // Retry loop: up to 3 attempts with increasing delay
+            const MAX_RETRIES = 3
+            let attempt = 1
+            while ((texts.length === 0 || texts.length !== n) && attempt <= MAX_RETRIES) {
+              const delay = attempt * 800
+              onLog(`    ↻ ${label}: вернулось ${texts.length}/${n} → повтор ${attempt}/${MAX_RETRIES} (${delay}мс)`, 'wa')
+              await sleep(delay)
+              const retried = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec)
+              if (retried.length === n) { texts = retried; break }
+              if (retried.length > texts.length) texts = retried
+              attempt++
             }
 
-            // Zip texts → flagIds
-            segs.forEach((seg, i) => {
-              allText.set(seg.flagId, texts[i] || '')
-            })
+            // Fallback: if still 0 results — send whole chunk without segments, get single text block
+            if (texts.length === 0) {
+              onLog(`    ⚠ ${label}: fallback → транскрипция без сегментов`, 'wa')
+              await sleep(1000)
+              const fallbackTexts = await callGemini(apiKey, b64, [{localStart:0, localEnd:dur}], langName, dur, chunkSec)
+              if (fallbackTexts.length > 0 && fallbackTexts[0]) {
+                allText.set(segs[0].flagId, fallbackTexts[0])
+                fallbackEnds.set(segs[0].flagId, chunk.t1)
+                onLog(`    ✓ ${label}: fallback → 1 сег (весь чанк ${t0.toFixed(1)}–${chunk.t1.toFixed(1)}с)`, 'wa')
+              }
+            } else {
+              // Zip texts → flagIds
+              segs.forEach((seg, i) => {
+                allText.set(seg.flagId, texts[i] || '')
+              })
+            }
 
             done++
             const filled = segs.filter(s => allText.get(s.flagId)).length
@@ -145,5 +165,5 @@ export async function dispatchChunks({
     launch()
   })
 
-  return allText
+  return { allText, fallbackEnds }
 }
