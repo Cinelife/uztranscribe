@@ -1,9 +1,0 @@
-{
-  "current": "12.0.0",
-  "currentLabel": "12.0.0",
-  "currentDate": "2026-03-06",
-  "versions": [
-    { "id": "11.0.0", "label": "11.0.0", "date": "2026-03-06", "path": "versions/11.0.0/" },
-    { "id": "10.0.0", "label": "10.0.0", "date": "2026-03-06", "path": "versions/10.0.0/" }
-  ]
-}
