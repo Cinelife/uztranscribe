@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 const ALLOWED = new Set(['mp3','wav','m4a','ogg','flac','aac','mp4','mov','mkv','avi','webm'])
 
 export default function FilesCard({ files, setFiles, fileStatuses }) {
   const [dragging, setDragging] = useState(false)
-  const inputRef = useRef(null)
 
   const addFiles = (list) => {
     setFiles(prev => {
@@ -26,24 +25,24 @@ export default function FilesCard({ files, setFiles, fileStatuses }) {
     <div className="card">
       <div className="ct">Аудио / Видео файлы</div>
 
-      <div
+      <label
         className={`drop${dragging ? ' dv' : ''}`}
-        onClick={() => inputRef.current?.click()}
+        style={{ cursor: 'pointer', display: 'block' }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}
       >
-        <input ref={inputRef} type="file" multiple
+        <input type="file" multiple
           accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.mov,.mkv,.avi,.webm"
           onChange={e => { addFiles(e.target.files); e.target.value = '' }}
-          style={{ position:'absolute', opacity:0, width:0, height:0, pointerEvents:'none' }}
+          style={{ display: 'none' }}
         />
         <div className="di">📂</div>
         <div className="dt">
           <strong>Кликни</strong> или перетащи файлы<br/>
           MP3, WAV, M4A, OGG, FLAC, MP4, MOV, MKV...
         </div>
-      </div>
+      </label>
 
       {files.length > 0 && (
         <div className="fl">
