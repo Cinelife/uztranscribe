@@ -6,7 +6,6 @@
  */
 
 import { NonRealTimeVAD } from '@ricky0123/vad-web'
-import * as ort from 'onnxruntime-web'
 
 // Resolve /vad/ base — works both on localhost and GitHub Pages subpath
 function vadBase() {
