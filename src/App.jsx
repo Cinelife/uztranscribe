@@ -22,6 +22,7 @@ export default function App() {
   const [mergeGap,   setMergeGap]   = useState(1.2)  // s  — assembler merge threshold
   const [mergeMode,  setMergeMode]  = useState('balanced') // strict | balanced | sentence
   const [subTiming,  setSubTiming]  = useState('vad')      // vad | words
+  const [dedupWindow, setDedupWindow] = useState(12)         // 0 = dedup off
   const [timingMode, setTimingMode] = useState('v12')
   const [orModel,    setOrModel]    = useState(OR_MODELS[0].id)
 
@@ -48,7 +49,7 @@ export default function App() {
   } = useTranslation()
 
   const handleStart = () => startBatch({
-    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, subTiming, timingMode,
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, subTiming, dedupWindow, timingMode,
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef
   })
@@ -85,6 +86,8 @@ export default function App() {
         minPause={minPause}   setMinPause={setMinPause}
         mergeGap={mergeGap}   setMergeGap={setMergeGap}
         mergeMode={mergeMode}  setMergeMode={setMergeMode}
+        subTiming={subTiming}   setSubTiming={setSubTiming}
+        dedupWindow={dedupWindow} setDedupWindow={setDedupWindow}
         timingMode={timingMode} setTimingMode={setTimingMode}
         orModel={orModel}     setOrModel={setOrModel}
         voskReady={voskReady} setVoskReady={setVoskReady}

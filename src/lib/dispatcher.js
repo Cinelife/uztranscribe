@@ -23,7 +23,9 @@ function buildPrompt(segments, flagIds, langName, chunkDur) {
     `${lines}\n\n` +
     `Rules:\n` +
     `- Full linguistic intelligence: names, abbreviations, terminology.\n` +
-    `- Repetition is real content — transcribe it again if audio repeats.\n` +
+    (dedupWindow === 0
+      ? `- Repetition is real content — if audio repeats a phrase, transcribe it again.\n`
+      : `- Do NOT repeat text from previous segments — transcribe only what you hear in THIS clip.\n`) +
     `- Empty string "" only for completely silent/inaudible segments.\n\n` +
     `Output — one line per segment, EXACTLY this format:\n` +
     segments.map((_, i) => `[${flagIds[i]}] <transcribed text>`).join('\n') + '\n\n' +
@@ -78,7 +80,7 @@ async function callGemini(apiKey, b64wav, segments, flagIds, langName, chunkDur)
 }
 
 export async function dispatchChunks({
-  audioBuf, chunks, apiKey, lang, chunkSec,
+  audioBuf, chunks, apiKey, lang, chunkSec, dedupWindow = 12,
   onLog, onProgress, stopFlagRef,
   CONCURRENCY = 3
 }) {

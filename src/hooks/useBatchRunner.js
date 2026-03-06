@@ -33,7 +33,7 @@ export function useBatchRunner() {
   }, [])
 
   const startBatch = useCallback(async ({
-    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, subTiming = 'vad', timingMode,
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, subTiming = 'vad', dedupWindow = 12, timingMode,
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef
   }) => {
@@ -109,7 +109,7 @@ export function useBatchRunner() {
 
               const { allText: textMap, fallbackEnds } = await dispatchChunks({
                 audioBuf, chunks,
-                apiKey: gmKey, lang, chunkSec,
+                apiKey: gmKey, lang, chunkSec, dedupWindow,
                 onLog: addLog,
                 onProgress: (pct, txt) => {
                   setProgress(((fi * totalJobs) + done + pct/100) / totalJobs * 100)
@@ -125,7 +125,7 @@ export function useBatchRunner() {
                 const entry = flagMap.get(fid)
                 if (entry) entry.end = endTime
               }
-              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode, subTiming)
+              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode, subTiming, dedupWindow)
               const segCount   = (srtContent.match(/^\d+$/mg) || []).length
               addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')
 

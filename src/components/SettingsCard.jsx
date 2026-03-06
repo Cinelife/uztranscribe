@@ -17,6 +17,7 @@ export default function SettingsCard({
   mergeGap, setMergeGap,
   mergeMode, setMergeMode,
   subTiming, setSubTiming,
+  dedupWindow, setDedupWindow,
   timingMode, setTimingMode,
   orModel, setOrModel,
   voskReady, setVoskReady,
@@ -129,6 +130,17 @@ export default function SettingsCard({
               <input type="range" min="0.2" max="2.0" step="0.1" value={mergeGap}
                 onChange={e => setMergeGap(Number(e.target.value))} />
             </div>
+            <div>
+              <label>Дедупликация: <strong style={{color: dedupWindow === 0 ? 'var(--er)' : 'var(--pu)'}}>
+                {dedupWindow === 0 ? '✗ выкл' : `окно ${dedupWindow}`}
+              </strong>
+                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>
+                  {dedupWindow === 0 ? 'повторы не удаляются' : '↑ шире поиск дублей'}
+                </span>
+              </label>
+              <input type="range" min="0" max="20" step="1" value={dedupWindow}
+                onChange={e => setDedupWindow(Number(e.target.value))} />
+            </div>
           </div>
         )}
         {timingMode === 'v12' && (
@@ -151,13 +163,17 @@ export default function SettingsCard({
                 </button>
               ))}
             </div>
-            <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginTop:'10px',marginBottom:'6px'}}>
+          </div>
+        )}
+        {timingMode === 'silero' && (
+          <div style={{marginTop:'10px'}}>
+            <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
               Тайм-коды внутри сегмента:
             </label>
             <div style={{display:'flex',gap:'8px'}}>
               {[
-                ['vad',   '📍 VAD',    'использовать границы VAD как есть (быстрее)'],
-                ['words', '📏 По словам', 'делить время сегмента пропорционально словам'],
+                ['vad',   '📍 VAD',       'использовать границы Silero VAD как есть'],
+                ['words', '📏 По словам', 'делить время пропорционально словам'],
               ].map(([v, label, hint]) => (
                 <button key={v}
                   title={hint}
