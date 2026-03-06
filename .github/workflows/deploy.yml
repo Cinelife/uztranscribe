@@ -12,7 +12,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout main
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -21,104 +21,108 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install & Build
+        run: |
+          npm install
+          npm run build
 
-      - name: Build
-        run: npm run build
-
-      # ── Version archiving ──────────────────────────────────────────────────
-      - name: Checkout gh-pages (for versioning)
+      - name: Checkout existing gh-pages
         uses: actions/checkout@v4
         with:
           ref: gh-pages
-          path: gh-pages-prev
+          path: gh-pages-existing
         continue-on-error: true
 
-      - name: Archive previous version & update manifest
+      - name: Archive previous version & build manifest
         run: |
-          set -e
-          DIST="docs"
-          PREV="gh-pages-prev"
-          NEW_VER=$(node -e "console.log(require('./package.json').version||'unknown')")
-          DATE_SHORT=$(date -u +"%Y-%m-%d")
+          CURRENT_VER=$(node -e "console.log(require('./package.json').version)")
+          CURRENT_DATE=$(date +"%Y-%m-%d")
+          echo "Building version: $CURRENT_VER"
 
-          # Read existing manifest
-          MANIFEST_FILE="$PREV/versions/manifest.json"
-          if [ -f "$MANIFEST_FILE" ]; then
-            PREV_VER=$(node -e "const d=JSON.parse(require('fs').readFileSync('$MANIFEST_FILE','utf8'));console.log(d.current||'')")
-          else
-            PREV_VER=""
+          mkdir -p dist/versions
+
+          # Copy existing archived versions if they exist
+          if [ -d gh-pages-existing/versions ]; then
+            rsync -a --exclude='manifest.json' gh-pages-existing/versions/ dist/versions/ || true
           fi
 
-          echo "Previous version: '$PREV_VER'  →  New version: '$NEW_VER'"
-
-          # Archive the previous root into dist/versions/<prevVer>/
-          if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$NEW_VER" ] && [ -d "$PREV" ]; then
-            ARCH_DIR="$DIST/versions/$PREV_VER"
-            mkdir -p "$ARCH_DIR"
-            rsync -a --exclude='versions/' "$PREV/" "$ARCH_DIR/" 2>/dev/null || true
-            echo "Archived $PREV_VER → $ARCH_DIR"
+          # Read previous manifest to get old current version
+          PREV_VER=""
+          PREV_LABEL=""
+          PREV_DATE=""
+          if [ -f gh-pages-existing/versions/manifest.json ]; then
+            PREV_VER=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.current||'')}catch(e){console.log('')}")
+            PREV_LABEL=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.currentLabel||m.current||'')}catch(e){console.log('')}")
+            PREV_DATE=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.currentDate||'')}catch(e){console.log('')}")
           fi
 
-          # Carry over existing archived versions (not manifest)
-          if [ -d "$PREV/versions" ]; then
-            mkdir -p "$DIST/versions"
-            rsync -a --exclude='manifest.json' "$PREV/versions/" "$DIST/versions/" 2>/dev/null || true
+          # Archive previous version's built files if version changed
+          if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$CURRENT_VER" ]; then
+            echo "Archiving previous version: $PREV_VER"
+            mkdir -p "dist/versions/$PREV_VER"
+            if [ -d gh-pages-existing ]; then
+              # Copy all static files except versions/ dir
+              rsync -a --exclude='versions' gh-pages-existing/ "dist/versions/$PREV_VER/" || true
+            fi
           fi
 
-          # Build new manifest (keep 2 archived = 3 total with current)
-          node << 'JS'
-          const fs   = require('fs')
-          const path = require('path')
+          # Generate manifest.json
+          node -e "
+            const fs = require('fs');
+            const MAX_ARCHIVED = 2;
+            let archived = [];
 
-          const distVer  = 'docs/versions'
-          const mPath    = 'gh-pages-prev/versions/manifest.json'
-          const newVer   = process.env.npm_package_version ||
-                           JSON.parse(fs.readFileSync('package.json','utf8')).version || 'unknown'
-          const dateShort = new Date().toISOString().slice(0,10)
-          const prevVer  = fs.existsSync(mPath)
-                           ? JSON.parse(fs.readFileSync(mPath,'utf8')).current || ''
-                           : ''
+            // Read existing archived from dist/versions
+            const versionsDir = 'dist/versions';
+            if (fs.existsSync(versionsDir)) {
+              const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
+              for (const e of entries) {
+                if (e.isDirectory()) {
+                  archived.push({ id: e.name, label: e.name, date: '', path: 'versions/' + e.name + '/' });
+                }
+              }
+            }
 
-          let versions = []
-          if (fs.existsSync(mPath)) {
-            versions = JSON.parse(fs.readFileSync(mPath,'utf8')).versions || []
-          }
+            // Merge with previous manifest's version dates
+            const prevManifestPath = 'gh-pages-existing/versions/manifest.json';
+            if (fs.existsSync(prevManifestPath)) {
+              const prev = JSON.parse(fs.readFileSync(prevManifestPath, 'utf8'));
+              for (const a of archived) {
+                const found = (prev.versions || []).find(v => v.id === a.id);
+                if (found) { a.label = found.label; a.date = found.date; }
+                // Previous current archived now
+                if (a.id === prev.current && prev.currentDate) a.date = prev.currentDate;
+              }
+            }
 
-          // Add previous version to archived list
-          if (prevVer && prevVer !== newVer && !versions.find(v => v.id === prevVer)) {
-            versions.unshift({ id: prevVer, label: 'v' + prevVer, date: dateShort, path: 'versions/' + prevVer + '/' })
-          }
+            // Trim to MAX_ARCHIVED (keep newest)
+            archived.sort((a,b) => b.id.localeCompare(a.id));
+            const toRemove = archived.slice(MAX_ARCHIVED);
+            archived = archived.slice(0, MAX_ARCHIVED);
 
-          // Keep only 2 archived
-          const MAX = 2
-          if (versions.length > MAX) {
-            const removed = versions.splice(MAX)
-            removed.forEach(r => {
-              const dir = path.join('docs', r.path)
-              fs.rmSync(dir, { recursive: true, force: true })
-              console.log('Removed old version dir:', dir)
-            })
-          }
+            // Remove old version directories
+            for (const r of toRemove) {
+              const p = 'dist/versions/' + r.id;
+              if (fs.existsSync(p)) fs.rmSync(p, { recursive: true });
+            }
 
-          const manifest = {
-            current:      newVer,
-            currentLabel: newVer,
-            currentDate:  dateShort,
-            versions
-          }
+            const manifest = {
+              current: '$CURRENT_VER',
+              currentLabel: '$CURRENT_VER',
+              currentDate: '$CURRENT_DATE',
+              versions: archived
+            };
+            fs.mkdirSync('dist/versions', { recursive: true });
+            fs.writeFileSync('dist/versions/manifest.json', JSON.stringify(manifest, null, 2));
+            console.log('Manifest:', JSON.stringify(manifest, null, 2));
+          "
 
-          fs.mkdirSync(distVer, { recursive: true })
-          fs.writeFileSync(distVer + '/manifest.json', JSON.stringify(manifest, null, 2))
-          console.log('manifest.json:\n' + JSON.stringify(manifest, null, 2))
-          JS
-
-      # ── Deploy ─────────────────────────────────────────────────────────────
-      - name: Deploy to GitHub Pages
+      - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
-          publish_branch: gh-pages
-          force_orphan: false
+          destination_dir: .
+          keep_files: false
+          exclude_assets: ''
+          extra_files: dist/versions
