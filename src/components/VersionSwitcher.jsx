@@ -16,7 +16,11 @@ export default function VersionSwitcher() {
   useEffect(() => {
     if (!open || manifest) return
     setLoading(true)
-    fetch(`${base}versions/manifest.json?t=${Date.now()}`)
+    // Always fetch from site root — works both from / and from /versions/vX/
+    const root = window.location.pathname.includes('/versions/')
+      ? window.location.href.split('/versions/')[0] + '/'
+      : base
+    fetch(`${root}versions/manifest.json?t=${Date.now()}`)
       .then(r => { if (!r.ok) throw new Error(''); return r.json() })
       .then(d  => { setManifest(d); setLoading(false) })
       .catch(() => {
