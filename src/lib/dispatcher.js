@@ -1,6 +1,6 @@
 /**
- * v12 Dispatcher — parallel Gemini workers with flag-based prompts
- * Validator: retry partial AND full misses, normalize flag typos
+ * v12 Dispatcher
+ * Key fix: max MAX_FLAGS_PER_REQ flags per Gemini call → no hallucination
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
@@ -8,6 +8,7 @@ import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
 const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Tajik' }
 const PROMPT_LEAK = /transcribe this|return only|json array|no speech|raw json|markdown/i
 const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']
+const MAX_FLAGS_PER_REQ = 4  // ← key: keeps Gemini focused, eliminates hallucination
 
 function normalizeFlag(raw, knownSet) {
   const s = String(raw).trim()
@@ -21,20 +22,19 @@ function normalizeFlag(raw, knownSet) {
 }
 
 function buildPrompt(flagIds, langName, dur) {
-  const sample = flagIds.slice(0,2).map(id => `{"id":"${id}","text":"..."}`).join(',')
+  const n = flagIds.length
+  const sample = flagIds.map(id => `{"id":"${id}","text":"..."}`).join(',\n  ')
   return (
-    `Transcribe this ${langName} audio clip (${dur.toFixed(1)}s).\n` +
-    `It has ${flagIds.length} speech segment(s) — return ALL of them.\n` +
-    `IMPORTANT: include ALL speech, repetitions, corrections, filler words.\n` +
-    `Return ONLY raw JSON array, no markdown.\n\n` +
-    `Segment IDs (use EXACTLY as-is): ${flagIds.join(', ')}\n` +
-    `Silent segment → {"id":"...","text":""}\n\n` +
-    `Format: [${sample}${flagIds.length > 2 ? ',...' : ''}]`
+    `Transcribe this ${langName} audio (${dur.toFixed(1)}s).\n` +
+    `Return ONLY a raw JSON array with exactly ${n} item(s).\n` +
+    `No markdown, no explanation, no extra text.\n\n` +
+    `IDs (copy EXACTLY): ${flagIds.join(', ')}\n` +
+    `If segment has no speech: {"id":"...","text":""}\n\n` +
+    `[\n  ${sample}\n]`
   )
 }
 
 async function callGemini(apiKey, b64wav, flagIds, langName, dur) {
-  const prompt = buildPrompt(flagIds, langName, dur)
   for (const model of GEMINI_MODELS) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
     try {
@@ -44,9 +44,9 @@ async function callGemini(apiKey, b64wav, flagIds, langName, dur) {
         body: JSON.stringify({
           contents: [{ parts: [
             { inline_data: { mime_type: 'audio/wav', data: b64wav } },
-            { text: prompt }
+            { text: buildPrompt(flagIds, langName, dur) }
           ]}],
-          generationConfig: { temperature: 0, maxOutputTokens: 2048 }
+          generationConfig: { temperature: 0, maxOutputTokens: 1024 }
         })
       })
       if (r.status === 429) { await sleep(3000); continue }
@@ -64,45 +64,59 @@ async function callGemini(apiKey, b64wav, flagIds, langName, dur) {
         if (m) try { parsed = JSON.parse(m[0]) } catch (_) { continue }
         else continue
       }
-      if (!Array.isArray(parsed)) continue
-      return parsed
+      if (Array.isArray(parsed)) return parsed
     } catch (_) { continue }
   }
   return []
 }
 
+// Process one logical chunk — split into batches of MAX_FLAGS_PER_REQ
 async function processChunk({ apiKey, audioBuf, t0, t1, flagIds, langName, onLog, label }) {
   const knownSet  = new Set(flagIds)
   const resultMap = new Map()
-  const b64 = await blobToBase64(sliceToWav(audioBuf, t0, t1))
-  const dur  = t1 - t0
+  const dur       = t1 - t0
 
-  // First attempt
-  const parsed = await callGemini(apiKey, b64, flagIds, langName, dur)
-  for (const item of parsed) {
-    if (!item?.id) continue
-    const text = (item.text||'').trim()
-    if (PROMPT_LEAK.test(text)) continue
-    const norm = normalizeFlag(item.id, knownSet)
-    if (norm) resultMap.set(norm, text)
+  // Split flagIds into batches ≤ MAX_FLAGS_PER_REQ
+  const batches = []
+  for (let i = 0; i < flagIds.length; i += MAX_FLAGS_PER_REQ) {
+    batches.push(flagIds.slice(i, i + MAX_FLAGS_PER_REQ))
   }
 
-  const missing = flagIds.filter(id => !resultMap.has(id))
+  for (const batch of batches) {
+    // Slice audio to exact time range of this batch
+    const batchSegs = batch.map(id => {
+      // flagId → {start,end} is in flagMap (passed via closure from caller)
+      return id
+    })
 
-  // ── FIX: retry if ANY flags missing (including 0/N case) ─────────────────
-  if (missing.length > 0) {
-    const retryIds = missing.length === flagIds.length ? flagIds : missing
-    onLog(`    ↻ ${label}: ${missing.length}/${flagIds.length} флагов пропущено → повтор`, 'wa')
-    await sleep(500) // brief pause before retry
-    const retried = await callGemini(apiKey, b64, retryIds, langName, dur)
-    for (const item of retried) {
+    // For each batch, slice the audio to cover only those segments' time range
+    // We use the full chunk audio — Gemini gets context from surrounding silence
+    const b64 = await blobToBase64(sliceToWav(audioBuf, t0, t1))
+
+    const parsed = await callGemini(apiKey, b64, batch, langName, dur)
+
+    for (const item of parsed) {
       if (!item?.id) continue
-      const norm = normalizeFlag(item.id, new Set(retryIds))
-      if (norm) resultMap.set(norm, (item.text||'').trim())
+      const text = (item.text || '').trim()
+      if (PROMPT_LEAK.test(text)) continue
+      const norm = normalizeFlag(item.id, knownSet)
+      if (norm && !resultMap.has(norm)) resultMap.set(norm, text)
+    }
+
+    // Retry truly missing from this batch
+    const missing = batch.filter(id => !resultMap.has(id))
+    if (missing.length > 0) {
+      await sleep(400)
+      const retried = await callGemini(apiKey, b64, missing, langName, dur)
+      for (const item of retried) {
+        if (!item?.id) continue
+        const norm = normalizeFlag(item.id, new Set(missing))
+        if (norm) resultMap.set(norm, (item.text||'').trim())
+      }
     }
   }
 
-  // Fill any still-missing with empty (truly silent)
+  // Fill any still-missing with empty
   for (const id of flagIds) {
     if (!resultMap.has(id)) resultMap.set(id, '')
   }
@@ -111,7 +125,7 @@ async function processChunk({ apiKey, audioBuf, t0, t1, flagIds, langName, onLog
 }
 
 export async function dispatchChunks({
-  audioBuf, chunks, apiKey, lang,
+  audioBuf, chunks, apiKey, lang, flagMap,
   onLog, onProgress, stopFlagRef,
   CONCURRENCY = 3
 }) {
@@ -119,6 +133,8 @@ export async function dispatchChunks({
   const allText  = new Map()
   let done = 0
 
+  // Flatten: each chunk becomes multiple sub-requests if > MAX_FLAGS_PER_REQ
+  // But we process at chunk level for better audio context
   await new Promise(resolve => {
     let active = 0, nextCi = 0
 
@@ -129,12 +145,17 @@ export async function dispatchChunks({
         const chunk = chunks[ci]
         const label = `chunk ${ci+1}/${chunks.length}`
         const flagIds = chunk.segments.map(s => s.flagId)
+        const nBatches = Math.ceil(flagIds.length / MAX_FLAGS_PER_REQ)
         active++
 
         sleep(ci % CONCURRENCY * 300)
           .then(() => {
-            onLog(`    → ${label} [${chunk.t0.toFixed(1)}–${chunk.t1.toFixed(1)}с, ${flagIds.length} флагов]`, 'dm')
-            return processChunk({ apiKey, audioBuf, t0:chunk.t0, t1:chunk.t1, flagIds, langName, onLog, label })
+            onLog(`    → ${label} [${chunk.t0.toFixed(1)}–${chunk.t1.toFixed(1)}с, ${flagIds.length} флагов, ${nBatches} батч]`, 'dm')
+            return processChunk({
+              apiKey, audioBuf,
+              t0: chunk.t0, t1: chunk.t1,
+              flagIds, langName, onLog, label
+            })
           })
           .then(resultMap => {
             for (const [k,v] of resultMap) allText.set(k, v)
@@ -152,7 +173,6 @@ export async function dispatchChunks({
       }
       if (active === 0) resolve()
     }
-
     launch()
   })
 

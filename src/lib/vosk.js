@@ -175,14 +175,20 @@ export async function getVoskAllWords(file, voskModel, onProgress, onLog) {
   }
   helperCtx.close()
 
-  // Poll until words stabilize — give WASM time to emit remaining events
-  onLog && onLog(`    Vosk: финализация...`, 'dm')
-  let stable = 0
-  while (stable < 5) {
-    const before = allWords.length
-    await new Promise(r => setTimeout(r, 200))
-    if (allWords.length === before) stable++
-    else stable = 0
+  // WASM fires result events async — must wait proportional to audio duration
+  // Same formula as getVoskBoundaries which is proven to work
+  const finalWait = Math.max(totalDuration * 75, 5000)
+  const waitSec   = (finalWait / 1000).toFixed(1)
+  onLog && onLog(`    Vosk: финализация (~${waitSec}с)...`, 'dm')
+  const step = 500
+  let elapsed = 0
+  while (elapsed < finalWait) {
+    await new Promise(r => setTimeout(r, step))
+    elapsed += step
+    onProgress && onProgress(
+      90 + (elapsed / finalWait) * 10,
+      `Vosk: финализация ${(elapsed/1000).toFixed(0)}/${waitSec}с...`
+    )
   }
 
   onLog && onLog(`    Vosk: ${allWords.length} слов (${totalDuration.toFixed(0)}с аудио)`, 'ok')
