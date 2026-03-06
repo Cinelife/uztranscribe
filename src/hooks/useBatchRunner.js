@@ -6,6 +6,7 @@ import { buildSrt, downloadSrt } from '../lib/srtUtils.js'
 import { decodeAudio, sleep }  from '../lib/audioUtils.js'
 import { getVoskBoundaries }   from '../lib/vosk.js'
 import { segmentAudio }        from '../lib/segmenter.js'
+import { segmentAudioSilero }  from '../lib/sileroVad.js'
 import { dispatchChunks }      from '../lib/dispatcher.js'
 import { assemble }            from '../lib/assembler.js'
 
@@ -52,11 +53,14 @@ export function useBatchRunner() {
     const newSrtMap = {}
 
     const isV12 = (prov === 'gm' || prov === 'bo') && timingMode === 'v12'
+    // silero uses same pipeline as v12
 
     addLog('══════════════════════════════════════════════', 'dm')
     addLog(`Файлов: ${files.length} | Провайдер: ${prov.toUpperCase()} | Язык: ${lang}`, 'in')
     addLog(`Символов на строку: ${maxChars} | Чанк: ${chunkSec}с`, 'dm')
-    if (isV12)
+    if (timingMode === 'silero')
+      addLog(`Silero VAD: ✓ активен (нейросеть → флаги → Gemini)`, 'pu')
+    else if (isV12)
       addLog(`v12 Flag-Segmenter: ✓ активен (OfflineAudioContext → флаги → Gemini)`, 'pu')
     else if (timingMode === 'vosk' && voskReady)
       addLog(`Vosk 2-pass: ✓ активен`, 'ok')
@@ -80,17 +84,22 @@ export function useBatchRunner() {
 
           } else if (p === 'gm') {
 
-            if (isV12) {
-              // ── v12 pipeline ─────────────────────────────────────────────
+            const isSilero = timingMode === 'silero'
+            if (isV12 || isSilero) {
+              // ── v12 / Silero pipeline ────────────────────────────────────
 
               // Phase 1: Segment
-              addLog(`  Phase 1 — Segmenter: анализ аудио...`, 'pu')
+              const segLabel = isSilero ? 'Silero VAD' : 'Segmenter'
+              addLog(`  Phase 1 — ${segLabel}: анализ аудио...`, 'pu')
               setVoskVisible(true)
 
-              const { flagMap, chunks, totalMicroSegs } = await segmentAudio(
-                file, chunkSec, minPause,
-                (pct, txt) => { setVoskPct(pct); setVoskText(txt) }
-              )
+              const { flagMap, chunks, totalMicroSegs } = isSilero
+                ? await segmentAudioSilero(file, chunkSec, minPause,
+                    (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') },
+                    addLog)
+                : await segmentAudio(file, chunkSec, minPause,
+                    (pct, txt) => { setVoskPct(pct); setVoskText(txt) }
+                  )
               setVoskVisible(false)
               addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков`, 'ok')
 

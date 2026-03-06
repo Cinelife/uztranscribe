@@ -4,7 +4,7 @@ import { initVoskModel }   from '../lib/vosk.js'
 
 const TM_DESC = {
   smart: 'Авто-поиск тишины в аудио — без зависимостей, работает везде',
-  vosk:  'v11: Vosk per-chunk → акустические якоря → Gemini пишет только текст (точные таймкоды)',
+  silero: 'Silero VAD: нейросеть (1.8MB, встроена) → точные паузы → флаги → Gemini текст',
   v12:   'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler (без Vosk)'
 }
 
@@ -158,7 +158,7 @@ export default function SettingsCard({
         <div style={{ marginTop:12 }}>
           <label>Метод тайм-кодов</label>
           <div className="tmtabs">
-            {[['smart','⚡ Smart Silence'],['vosk','🔬 Vosk v11'],['v12','🚀 v12 Flags']].map(([v,l]) => (
+            {[['smart','⚡ Smart Silence'],['silero','🧠 Silero VAD'],['v12','🚀 v12 Flags']].map(([v,l]) => (
               <button key={v}
                 className={`btn tm tm-${v}${timingMode===v?' on':''}`}
                 onClick={() => setTimingMode(v)}>{l}</button>
@@ -169,7 +169,7 @@ export default function SettingsCard({
       )}
 
       {/* Vosk loader — only when vosk mode selected */}
-      {timingMode === 'vosk' && prov !== 'el' && (
+      {timingMode === 'silero_old_vosk_hidden' && prov !== 'el' && (
         <div style={{ marginTop:12, padding:'14px', background:'var(--bg3)', borderRadius:'8px', border:'1px solid var(--brd)' }}>
           <label style={{ marginBottom:8 }}>
             🔬 Vosk модель (.zip) —{' '}

@@ -16,12 +16,12 @@ export default function App() {
 
   const [prov,       setProv]       = useState('el')
   const [lang,       setLang]       = useState('uz')
-  const [chunkSec,   setChunkSec]   = useState(30)
-  const [maxChars,   setMaxChars]   = useState(80)
-  const [minPause,   setMinPause]   = useState(200)  // ms — segmenter sensitivity
-  const [mergeGap,   setMergeGap]   = useState(0.5)  // s  — assembler merge threshold
-  const [mergeMode,  setMergeMode]  = useState('strict') // strict | balanced | sentence
-  const [timingMode, setTimingMode] = useState('smart')
+  const [chunkSec,   setChunkSec]   = useState(25)
+  const [maxChars,   setMaxChars]   = useState(45)
+  const [minPause,   setMinPause]   = useState(500)  // ms — segmenter sensitivity
+  const [mergeGap,   setMergeGap]   = useState(1.2)  // s  — assembler merge threshold
+  const [mergeMode,  setMergeMode]  = useState('balanced') // strict | balanced | sentence
+  const [timingMode, setTimingMode] = useState('v12')
   const [orModel,    setOrModel]    = useState(OR_MODELS[0].id)
 
   const [files,        setFiles]        = useState([])
