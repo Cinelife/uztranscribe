@@ -1,33 +1,46 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
+
+const CURRENT_VER = __APP_VERSION__
 
 export default function VersionSwitcher() {
   const [open,     setOpen]     = useState(false)
   const [manifest, setManifest] = useState(null)
   const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState(null)
-  const containerRef = useRef(null)  // wraps BOTH button + popup
+  const [pos,      setPos]      = useState({ top:0, right:0 })
+  const btnRef = useRef(null)
 
   const base = import.meta.env.BASE_URL || './'
 
   // Load manifest on first open
   useEffect(() => {
     if (!open || manifest) return
-    setLoading(true); setError(null)
+    setLoading(true)
     fetch(`${base}versions/manifest.json?t=${Date.now()}`)
-      .then(r => { if (!r.ok) throw new Error('manifest.json not found'); return r.json() })
+      .then(r => { if (!r.ok) throw new Error(''); return r.json() })
       .then(d  => { setManifest(d); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
+      .catch(() => {
+        setManifest({ current: CURRENT_VER, currentLabel: CURRENT_VER, currentDate: '', versions: [] })
+        setLoading(false)
+      })
   }, [open, manifest, base])
 
-  // Outside-click closes popup — but ONLY when clicking outside entire container
+  // Compute popup position from button rect
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setPos({
+        top:   r.bottom + window.scrollY + 6,
+        right: window.innerWidth - r.right
+      })
+    }
+    setOpen(o => !o)
+  }
+
+  // Outside click
   useEffect(() => {
     if (!open) return
-    const h = e => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
-        setOpen(false)
-      }
-    }
-    // Use timeout so this listener doesn't catch the opening click
+    const h = e => { if (btnRef.current && !btnRef.current.contains(e.target)) setOpen(false) }
     const timer = setTimeout(() => document.addEventListener('mousedown', h), 0)
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', h) }
   }, [open])
@@ -41,50 +54,51 @@ export default function VersionSwitcher() {
 
   const activeId = isArchived
     ? allVersions.find(v => v.id && window.location.pathname.includes(v.id))?.id
-    : manifest?.current
+    : (manifest?.current || CURRENT_VER)
 
-  const switchTo = (ver) => {
+  const switchTo = ver => {
     const url = (!ver.path || ver.id === manifest?.current) ? base : `${base}${ver.path}`
     if (url !== window.location.pathname + window.location.search) window.location.href = url
     else setOpen(false)
   }
 
-  const currentLabel = manifest?.currentLabel || manifest?.current || '10'
+  const popup = open && createPortal(
+    <div
+      className="version-popup"
+      style={{ position:'absolute', top: pos.top, right: pos.right }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      <div className="version-popup-title">ВЕРСИИ ПРОЕКТА</div>
+      {loading && <div className="version-popup-hint">загрузка...</div>}
+      {!loading && allVersions.map(ver => {
+        const isActive = ver.id === activeId
+        return (
+          <button key={ver.id} onClick={() => switchTo(ver)}
+            className={`version-item${isActive ? ' active' : ''}`}>
+            <span className="version-item-label">{ver.isCurrent ? '★ ' : ''}{ver.label}</span>
+            {isActive && <span className="version-item-tag">текущая</span>}
+            {ver.date && <div className="version-item-date">{ver.date}</div>}
+          </button>
+        )
+      })}
+      <div className="version-popup-footer">Хранится 3 версии · переключение мгновенное</div>
+    </div>,
+    document.body
+  )
 
   return (
-    <div ref={containerRef} style={{ position:'relative', display:'inline-block' }}>
+    <>
       <button
-        onClick={() => setOpen(o => !o)}
+        ref={btnRef}
+        onClick={handleOpen}
         title="Переключить версию"
         className={`badge bpu${isArchived ? ' badge-archived' : ''}`}
         style={{ cursor:'pointer', border:'none', userSelect:'none', fontFamily:'inherit' }}
       >
-        {isArchived ? `◀ ${activeId || '?'}` : `v${currentLabel}`}
+        {isArchived ? `◀ ${activeId || '?'}` : `v${CURRENT_VER}`}
         <span style={{ opacity:.5, fontSize:9, marginLeft:3 }}>▾</span>
       </button>
-
-      {open && (
-        <div className="version-popup">
-          <div className="version-popup-title">ВЕРСИИ ПРОЕКТА</div>
-          {loading && <div className="version-popup-hint">загрузка...</div>}
-          {error   && <div className="version-popup-hint" style={{ color:'var(--wa)' }}>⚠ Только текущая версия</div>}
-          {!loading && !error && allVersions.map(ver => {
-            const isActive = ver.id === activeId
-            return (
-              <button key={ver.id} onClick={() => switchTo(ver)}
-                className={`version-item${isActive ? ' active' : ''}`}>
-                <span className="version-item-label">{ver.isCurrent ? '★ ' : ''}{ver.label}</span>
-                {isActive && <span className="version-item-tag">текущая</span>}
-                {ver.date && <div className="version-item-date">{ver.date}</div>}
-              </button>
-            )
-          })}
-          {!loading && !error && allVersions.length === 0 && (
-            <div className="version-popup-hint">Только текущая версия</div>
-          )}
-          <div className="version-popup-footer">Хранится 3 версии · переключение мгновенное</div>
-        </div>
-      )}
-    </div>
+      {popup}
+    </>
   )
 }
