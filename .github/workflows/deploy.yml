@@ -1,0 +1,124 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # ── Version archiving ──────────────────────────────────────────────────
+      - name: Checkout gh-pages (for versioning)
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages-prev
+        continue-on-error: true
+
+      - name: Archive previous version & update manifest
+        run: |
+          set -e
+          DIST="docs"
+          PREV="gh-pages-prev"
+          NEW_VER=$(node -e "console.log(require('./package.json').version||'unknown')")
+          DATE_SHORT=$(date -u +"%Y-%m-%d")
+
+          # Read existing manifest
+          MANIFEST_FILE="$PREV/versions/manifest.json"
+          if [ -f "$MANIFEST_FILE" ]; then
+            PREV_VER=$(node -e "const d=JSON.parse(require('fs').readFileSync('$MANIFEST_FILE','utf8'));console.log(d.current||'')")
+          else
+            PREV_VER=""
+          fi
+
+          echo "Previous version: '$PREV_VER'  →  New version: '$NEW_VER'"
+
+          # Archive the previous root into dist/versions/<prevVer>/
+          if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$NEW_VER" ] && [ -d "$PREV" ]; then
+            ARCH_DIR="$DIST/versions/$PREV_VER"
+            mkdir -p "$ARCH_DIR"
+            rsync -a --exclude='versions/' "$PREV/" "$ARCH_DIR/" 2>/dev/null || true
+            echo "Archived $PREV_VER → $ARCH_DIR"
+          fi
+
+          # Carry over existing archived versions (not manifest)
+          if [ -d "$PREV/versions" ]; then
+            mkdir -p "$DIST/versions"
+            rsync -a --exclude='manifest.json' "$PREV/versions/" "$DIST/versions/" 2>/dev/null || true
+          fi
+
+          # Build new manifest (keep 2 archived = 3 total with current)
+          node << 'JS'
+          const fs   = require('fs')
+          const path = require('path')
+
+          const distVer  = 'docs/versions'
+          const mPath    = 'gh-pages-prev/versions/manifest.json'
+          const newVer   = process.env.npm_package_version ||
+                           JSON.parse(fs.readFileSync('package.json','utf8')).version || 'unknown'
+          const dateShort = new Date().toISOString().slice(0,10)
+          const prevVer  = fs.existsSync(mPath)
+                           ? JSON.parse(fs.readFileSync(mPath,'utf8')).current || ''
+                           : ''
+
+          let versions = []
+          if (fs.existsSync(mPath)) {
+            versions = JSON.parse(fs.readFileSync(mPath,'utf8')).versions || []
+          }
+
+          // Add previous version to archived list
+          if (prevVer && prevVer !== newVer && !versions.find(v => v.id === prevVer)) {
+            versions.unshift({ id: prevVer, label: 'v' + prevVer, date: dateShort, path: 'versions/' + prevVer + '/' })
+          }
+
+          // Keep only 2 archived
+          const MAX = 2
+          if (versions.length > MAX) {
+            const removed = versions.splice(MAX)
+            removed.forEach(r => {
+              const dir = path.join('docs', r.path)
+              fs.rmSync(dir, { recursive: true, force: true })
+              console.log('Removed old version dir:', dir)
+            })
+          }
+
+          const manifest = {
+            current:      newVer,
+            currentLabel: newVer,
+            currentDate:  dateShort,
+            versions
+          }
+
+          fs.mkdirSync(distVer, { recursive: true })
+          fs.writeFileSync(distVer + '/manifest.json', JSON.stringify(manifest, null, 2))
+          console.log('manifest.json:\n' + JSON.stringify(manifest, null, 2))
+          JS
+
+      # ── Deploy ─────────────────────────────────────────────────────────────
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          publish_branch: gh-pages
+          force_orphan: false
