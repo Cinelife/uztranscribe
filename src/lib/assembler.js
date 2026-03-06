@@ -101,14 +101,28 @@ export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5, mergeM
   segs.sort((a, b) => a.start - b.start)
   if (segs.length === 0) return ''
 
-  // Dedup consecutive identical segments
+  // Dedup: sliding window of last 12 segs — catches Gemini hallucination repeats
+  const WINDOW = 12
   const deduped = [segs[0]]
   for (let i = 1; i < segs.length; i++) {
-    const prev = norm(deduped[deduped.length-1].text)
     const curr = norm(segs[i].text)
-    if (curr !== prev && !prev.includes(curr) && !curr.includes(prev)) {
-      deduped.push(segs[i])
-    }
+    const windowStart = Math.max(0, deduped.length - WINDOW)
+    const isDup = deduped.slice(windowStart).some(prev => {
+      const p = norm(prev.text)
+      // Exact match OR high overlap (one contains >=80% of the other)
+      if (p === curr && curr.length > 4) return true  // ignore single short words
+      // contains check: only if the shorter text has 3+ words
+      const currWords = curr.split(' ').length
+      const pWords = p.split(' ').length
+      if (Math.min(currWords, pWords) >= 3 && (p.includes(curr) || curr.includes(p))) return true
+      // Jaccard-like: word overlap ratio (only for texts with 4+ content words)
+      const pw = new Set(p.split(' ').filter(w => w.length > 3))
+      const cw = curr.split(' ').filter(w => w.length > 3)
+      if (pw.size < 4 || cw.length < 4) return false  // too short to compare
+      const overlap = cw.filter(w => pw.has(w)).length
+      return overlap / Math.max(pw.size, cw.length) > 0.75
+    })
+    if (!isDup) deduped.push(segs[i])
   }
 
   // Merge by mode
