@@ -59,7 +59,7 @@ function mergeSentence(segs, maxChars, mergeGap) {
     const combined = cur.text + ' ' + next.text
     const gap = next.start - cur.end
     const endsAtBreak = BREAK.test(cur.text.trim())
-    // Merge if: fits AND gap is small AND current doesn't end a sentence
+    // Merge if: fits maxChars AND gap small AND current doesn't end a sentence
     if (combined.length <= maxChars && gap < mergeGap && !endsAtBreak) {
       cur = { start: cur.start, end: next.end, text: combined }
     } else {
@@ -67,7 +67,25 @@ function mergeSentence(segs, maxChars, mergeGap) {
     }
   }
   out.push(cur)
-  return out
+  // Hard split: any segment still over maxChars gets split at word boundary
+  const final = []
+  for (const seg of out) {
+    if (seg.text.length <= maxChars) { final.push(seg); continue }
+    const words = seg.text.split(' ')
+    const dur   = seg.end - seg.start
+    let line = '', lineStart = seg.start
+    for (let wi = 0; wi < words.length; wi++) {
+      const candidate = line ? line + ' ' + words[wi] : words[wi]
+      if (candidate.length > maxChars && line) {
+        const ratio = line.split(' ').length / words.length
+        final.push({ start: lineStart, end: lineStart + dur * ratio, text: line })
+        lineStart = lineStart + dur * ratio
+        line = words[wi]
+      } else { line = candidate }
+    }
+    if (line) final.push({ start: lineStart, end: seg.end, text: line })
+  }
+  return final
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -105,5 +123,23 @@ export function assemble(flagMap, textMap, maxChars = 80, mergeGap = 0.5, mergeM
       merged[i].end = Math.max(merged[i].start + 0.1, merged[i+1].start - 0.05)
   }
 
-  return buildSrt(merged)
+  // Hard split: enforce maxChars at word boundary for any oversized segment
+  const final = []
+  for (const seg of merged) {
+    if (seg.text.length <= maxChars) { final.push(seg); continue }
+    const words = seg.text.split(' ')
+    const dur   = (seg.end - seg.start) / words.length
+    let line = '', lineStart = seg.start
+    for (const word of words) {
+      const candidate = line ? line + ' ' + word : word
+      if (candidate.length > maxChars && line) {
+        final.push({ start: lineStart, end: lineStart + dur * line.split(' ').length, text: line })
+        lineStart += dur * line.split(' ').length
+        line = word
+      } else { line = candidate }
+    }
+    if (line) final.push({ start: lineStart, end: seg.end, text: line })
+  }
+
+  return buildSrt(final)
 }
