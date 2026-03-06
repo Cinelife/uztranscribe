@@ -24,17 +24,29 @@ export default function FilesCard({ files, setFiles, fileStatuses }) {
   return (
     <div className="card">
       <div className="ct">Аудио / Видео файлы</div>
+
+      {/* label нативно открывает диалог — input покрывает всю зону opacity:0 */}
       <label
         className={`drop${dragging ? ' dv' : ''}`}
-        style={{ cursor:'pointer', display:'block' }}
+        style={{ cursor:'pointer', display:'block', position:'relative' }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}
       >
-        <input type="file" multiple
+        {/* Растянут на всю зону, полностью прозрачный — браузер видит реальный input */}
+        <input
+          type="file"
+          multiple
           accept=".mp3,.wav,.m4a,.ogg,.flac,.aac,.mp4,.mov,.mkv,.avi,.webm"
           onChange={e => { addFiles(e.target.files); e.target.value = '' }}
-          style={{ display:'none' }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            opacity: 0,
+            cursor: 'pointer',
+          }}
         />
         <div className="di">📂</div>
         <div className="dt">
