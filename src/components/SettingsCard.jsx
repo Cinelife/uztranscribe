@@ -4,7 +4,8 @@ import { initVoskModel }   from '../lib/vosk.js'
 
 const TM_DESC = {
   smart: 'Авто-поиск тишины в аудио — без зависимостей, работает везде',
-  vosk:  'v11: Vosk per-chunk → акустические якоря → Gemini пишет только текст (точные таймкоды)'
+  vosk:  'v11: Vosk per-chunk → акустические якоря → Gemini пишет только текст (точные таймкоды)',
+  v12:   'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler (без Vosk)'
 }
 
 export default function SettingsCard({
@@ -113,7 +114,7 @@ export default function SettingsCard({
         <div style={{ marginTop:12 }}>
           <label>Метод тайм-кодов</label>
           <div className="tmtabs">
-            {[['smart','⚡ Smart Silence'],['vosk','🔬 Vosk v11']].map(([v,l]) => (
+            {[['smart','⚡ Smart Silence'],['vosk','🔬 Vosk v11'],['v12','🚀 v12 Flags']].map(([v,l]) => (
               <button key={v}
                 className={`btn tm tm-${v}${timingMode===v?' on':''}`}
                 onClick={() => setTimingMode(v)}>{l}</button>

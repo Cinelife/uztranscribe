@@ -1,18 +1,13 @@
 import { useRef, useState, useCallback } from 'react'
-import { transcribeEL }     from '../lib/elevenlabs.js'
-import { transcribeGemini, geminiAnchoredRequest } from '../lib/gemini.js'
+import { transcribeEL }        from '../lib/elevenlabs.js'
+import { transcribeGemini }    from '../lib/gemini.js'
 import { transcribeOpenRouter } from '../lib/openrouter.js'
 import { buildSrt, downloadSrt } from '../lib/srtUtils.js'
-import { decodeAudio, buildSmartChunks, sliceToWav, blobToBase64,
-         groupWordsByPauses, sleep } from '../lib/audioUtils.js'
-import { getVoskBoundaries, getVoskAllWords } from '../lib/vosk.js'
-
-// ── In-memory cache: file fingerprint → allWords array ───────────────────────
-const voskWordCache = new Map()
-function cacheKey(file) { return `${file.name}::${file.size}::${file.lastModified}` }
-
-// Vosk is ~real-time in WASM. Warn user for long files.
-const VOSK_WARN_SECONDS = 20 * 60 // 20 min
+import { decodeAudio, sleep }  from '../lib/audioUtils.js'
+import { getVoskBoundaries }   from '../lib/vosk.js'
+import { segmentAudio }        from '../lib/segmenter.js'
+import { dispatchChunks }      from '../lib/dispatcher.js'
+import { assemble }            from '../lib/assembler.js'
 
 export function useBatchRunner() {
   const [log,          setLog]          = useState([])
@@ -52,28 +47,30 @@ export function useBatchRunner() {
     setProgress(0)
     setVoskVisible(false)
 
-    const total = files.length * ((prov === 'bo') ? 2 : 1)
+    const totalJobs = files.length * (prov === 'bo' ? 2 : 1)
     let done = 0
     const newSrtMap = {}
 
-    const isV11 = (prov === 'gm' || prov === 'bo') && timingMode === 'vosk'
-                  && voskReady && voskModelRef?.current
+    const isV12 = (prov === 'gm' || prov === 'bo') && timingMode === 'v12'
 
     addLog('══════════════════════════════════════════════', 'dm')
     addLog(`Файлов: ${files.length} | Провайдер: ${prov.toUpperCase()} | Язык: ${lang}`, 'in')
-    addLog(`Символов на строку: ${maxChars}`, 'dm')
-    if (isV11) addLog(`Vosk v11 anchor-prompt: ✓ активен`, 'pu')
-    else if (timingMode === 'vosk' && voskReady) addLog(`Vosk 2-pass: ✓ активен`, 'ok')
+    addLog(`Символов на строку: ${maxChars} | Чанк: ${chunkSec}с`, 'dm')
+    if (isV12)
+      addLog(`v12 Flag-Segmenter: ✓ активен (OfflineAudioContext → флаги → Gemini)`, 'pu')
+    else if (timingMode === 'vosk' && voskReady)
+      addLog(`Vosk 2-pass: ✓ активен`, 'ok')
     addLog('══════════════════════════════════════════════', 'dm')
 
     for (let fi = 0; fi < files.length; fi++) {
       if (stopFlagRef.current) break
-      const file = files[fi]
+      const file      = files[fi]
       const providers = prov === 'bo' ? ['el', 'gm'] : [prov]
 
       for (const p of providers) {
         if (stopFlagRef.current) break
-        addLog(`[${fi+1}/${files.length}] ${file.name} (${p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'})`, 'in')
+        const provName = p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'
+        addLog(`[${fi+1}/${files.length}] ${file.name} (${provName})`, 'in')
 
         try {
           let segs = []
@@ -82,106 +79,44 @@ export function useBatchRunner() {
             segs = await transcribeEL(file, elKey, lang, maxChars, addLog)
 
           } else if (p === 'gm') {
-            if (isV11) {
-              // ── v11 pipeline ──────────────────────────────────────────────
-              const ab = await decodeAudio(file)
-              const fileDuration = ab.duration
-              const chunks = buildSmartChunks(ab, chunkSec)
 
-              // Check cache first
-              const ck = cacheKey(file)
-              let allWords = voskWordCache.get(ck) || null
+            if (isV12) {
+              // ── v12 pipeline ─────────────────────────────────────────────
 
-              if (allWords) {
-                addLog(`  Vosk: кеш ✓ (${allWords.length} слов, повторное декодирование не нужно)`, 'ok')
-              } else {
-                // Warn for long files
-                if (fileDuration > VOSK_WARN_SECONDS) {
-                  const mins = Math.round(fileDuration / 60)
-                  addLog(`  ⚠ Vosk для ${mins}-мин файла займёт ~${mins} мин (WASM реалтайм)`, 'wa')
-                  addLog(`  💡 Для длинных файлов рекомендуется Smart Silence (без Vosk)`, 'wa')
-                }
+              // Phase 1: Segment
+              addLog(`  Phase 1 — Segmenter: анализ аудио...`, 'pu')
+              setVoskVisible(true)
 
-                addLog(`  Phase 1 — Vosk: весь файл → слова...`, 'pu')
-                setVoskVisible(true)
+              const { flagMap, chunks, totalMicroSegs } = await segmentAudio(
+                file, chunkSec,
+                (pct, txt) => { setVoskPct(pct); setVoskText(txt) }
+              )
+              setVoskVisible(false)
+              addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков`, 'ok')
 
-                try {
-                  allWords = await getVoskAllWords(
-                    file, voskModelRef.current,
-                    (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
-                    addLog
-                  )
-                  if (allWords.length > 0) {
-                    voskWordCache.set(ck, allWords) // ← кешируем!
-                    addLog(`  Phase 1 ✓ — ${allWords.length} слов (сохранено в кеш)`, 'ok')
-                  } else {
-                    addLog(`  ⚠ Vosk: 0 слов — fallback на Smart Silence`, 'wa')
-                  }
-                } catch (e) {
-                  addLog(`  ⚠ Vosk ошибка: ${e.message} — fallback`, 'wa')
-                  allWords = []
-                }
-                setVoskVisible(false)
-              }
+              // Phase 2: Dispatch
+              addLog(`  Phase 2 — Dispatcher: ${chunks.length} запросов...`, 'gm-cl')
+              const audioBuf = await decodeAudio(file)
 
-              // Map words → per-chunk anchor segments
-              const chunkAnchors = chunks.map(({ t0, t1 }) => {
-                const chunkWords = allWords.filter(w => w.start >= t0 - 0.1 && w.end <= t1 + 0.1)
-                if (chunkWords.length > 0) {
-                  return groupWordsByPauses(chunkWords, 0.3, 7.0)
-                    .map(s => ({ start: s.start, end: s.end }))
-                }
-                // Fallback: split into ~5s pieces
-                const pieces = []
-                for (let t = t0; t < t1; t += 5)
-                  pieces.push({ start: t, end: Math.min(t + 5, t1) })
-                return pieces
+              const textMap = await dispatchChunks({
+                audioBuf, chunks,
+                apiKey: gmKey, lang,
+                onLog: addLog,
+                onProgress: (pct, txt) => {
+                  setProgress(((fi * totalJobs) + done + pct/100) / totalJobs * 100)
+                  setProgressText(txt)
+                },
+                stopFlagRef
               })
 
-              const totalAnchors = chunkAnchors.reduce((s, a) => s + a.length, 0)
-              addLog(`  Phase 2 — Gemini anchor: ${chunks.length} запросов, ${totalAnchors} якорей...`, 'gm-cl')
+              // Phase 3: Assemble
+              addLog(`  Phase 3 — Assembler...`, 'pu')
+              const srtContent = assemble(flagMap, textMap, maxChars)
+              const segCount   = (srtContent.match(/^\d+$/mg) || []).length
+              addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')
 
-              const results = new Array(chunks.length)
-              const CONCURRENCY = 3
-
-              await new Promise(resolve => {
-                let active = 0, nextCi = 0
-                function launch() {
-                  while (active < CONCURRENCY && nextCi < chunks.length) {
-                    if (stopFlagRef.current) break
-                    const ci = nextCi++
-                    active++
-                    const { t0, t1 } = chunks[ci]
-                    const dur = t1 - t0
-                    const localAnchors = chunkAnchors[ci].map((s, idx) => ({
-                      id:    idx + 1,
-                      start: parseFloat((s.start - t0).toFixed(3)),
-                      end:   parseFloat((s.end   - t0).toFixed(3))
-                    }))
-                    sleep(ci % CONCURRENCY * 400)
-                      .then(() => blobToBase64(sliceToWav(ab, t0, t1)))
-                      .then(b64 => geminiAnchoredRequest(gmKey, b64, localAnchors, lang, dur, addLog))
-                      .then(segTexts => {
-                        results[ci] = segTexts.map(s => ({
-                          start: t0 + s.start, end: t0 + s.end, text: s.text
-                        }))
-                        addLog(`    ✓ chunk ${ci+1} → ${results[ci].length} сег.`, 'dm')
-                      })
-                      .catch(() => { results[ci] = [] })
-                      .finally(() => {
-                        active--
-                        if (nextCi < chunks.length && !stopFlagRef.current) launch()
-                        else if (active === 0) resolve()
-                      })
-                  }
-                  if (active === 0) resolve()
-                }
-                launch()
-              })
-
-              for (const r of results) if (r) segs.push(...r)
-              segs = segs.filter(s => s.text)
-              segs.sort((a, b) => a.start - b.start)
+              // Convert SRT → segs for unified download below
+              segs = parseSrt(srtContent)
 
             } else {
               // ── v10 path ──────────────────────────────────────────────────
@@ -201,22 +136,22 @@ export function useBatchRunner() {
                   setVoskVisible(false)
                 }
               }
-              segs = await transcribeGemini(file, gmKey, lang, chunkSec, maxChars, preChunks,
-                addLog, t => setProgressText(t), stopFlagRef)
+              segs = await transcribeGemini(file, gmKey, lang, chunkSec, maxChars,
+                preChunks, addLog, t => setProgressText(t), stopFlagRef)
             }
 
           } else if (p === 'or') {
             let preChunks = null
             if (timingMode === 'vosk' && voskReady && voskModelRef?.current) {
-              addLog(`  Pass 1 — Vosk: ищем границы...`, 'pu')
               setVoskVisible(true)
               try {
                 preChunks = await getVoskBoundaries(
                   file, voskModelRef.current, addLog,
                   (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
-                  () => setVoskVisible(false), stopFlagRef
+                  () => setVoskVisible(false),
+                  stopFlagRef
                 )
-              } catch (e) { setVoskVisible(false) }
+              } catch (_) { setVoskVisible(false) }
             }
             segs = await transcribeOpenRouter(file, orKey, orModel, lang, chunkSec, maxChars,
               preChunks, addLog, t => setProgressText(t), stopFlagRef)
@@ -229,29 +164,29 @@ export function useBatchRunner() {
               segs[i].end = Math.max(segs[i].start + 0.1, segs[i+1].start - 0.05)
           }
 
-          const suffix = p==='el'?'_el':p==='or'?'_or':'_gm'
+          const suffix  = p==='el'?'_el':p==='or'?'_or':'_gm'
           const srtName = file.name.replace(/\.[^.]+$/, '') + suffix + '.srt'
-          const srtContent = buildSrt(segs)
-          downloadSrt(srtContent, srtName)
-          newSrtMap[srtName] = srtContent
+          const content = buildSrt(segs)
+          downloadSrt(content, srtName)
+          newSrtMap[srtName] = content
           done++
-          setProgress(done / total * 100)
+          setProgress(done / totalJobs * 100)
           addLog(`  ✓ ${srtName} (${segs.length} сегментов)`, 'ok')
 
         } catch (e) {
           addLog(`  ✗ ОШИБКА: ${e.message}`, 'er')
           done++
-          setProgress(done / total * 100)
+          setProgress(done / totalJobs * 100)
         }
       }
     }
 
     setLastSrtMap(prev => ({ ...prev, ...newSrtMap }))
     setProgress(100)
-    setStatusText(`✓ ${done}/${total} файлов`)
+    setStatusText(`✓ ${done}/${totalJobs} файлов`)
     addLog('', '')
     addLog('══════════════════════════════════════════════', 'dm')
-    addLog(`  ГОТОВО: ${done}/${total}`, done===total?'ok':'wa')
+    addLog(`  ГОТОВО: ${done}/${totalJobs}`, done===totalJobs?'ok':'wa')
     addLog('  SRT → папка Downloads', 'ok')
     if (done) addLog('  💡 Можно перевести результат ниже ↓', 'pu')
     addLog('══════════════════════════════════════════════', 'dm')
@@ -273,4 +208,17 @@ export function useBatchRunner() {
     running, startBatch, stopBatch,
     lastSrtMap
   }
+}
+
+function parseSrt(srt) {
+  const segs = []
+  for (const block of srt.trim().split('\n\n')) {
+    const lines = block.trim().split('\n')
+    if (lines.length < 3) continue
+    const tc = lines[1].match(/(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/)
+    if (!tc) continue
+    const toS = t => { const [h,m,s,ms] = t.split(/[:,]/); return +h*3600 + +m*60 + +s + +ms/1000 }
+    segs.push({ start: toS(tc[1]), end: toS(tc[2]), text: lines.slice(2).join(' ') })
+  }
+  return segs
 }
