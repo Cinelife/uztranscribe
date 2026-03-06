@@ -1,17 +1,11 @@
 /**
  * v12 Segmenter — OfflineAudioContext energy analysis
- *
- * Returns:
- *   flagMap: Map<flagId, {start,end}>  — timestamp index
- *   chunks:  [{t0, t1, segments:[{flagId,start,end}]}]  — Gemini queue
- *
  * Flag format: "CCC$SSS" — chunkIndex$segIndex (3-digit zero-padded)
- * Example: "001$003" = chunk 1, segment 3
  */
 
-const FRAME_MS   = 10    // energy analysis resolution
-const MIN_PAUSE  = 250   // ms silence to split segment
-const MIN_SEG    = 150   // ms minimum segment length
+const FRAME_MS  = 10   // energy resolution ms
+const MIN_PAUSE = 200  // ms silence to split (lowered from 250 for better sensitivity)
+const MIN_SEG   = 100  // ms minimum segment length
 
 function analyzeEnergy(channelData, sr) {
   const frameSize = Math.floor(sr * FRAME_MS / 1000)
@@ -33,10 +27,10 @@ function adaptiveThreshold(frames) {
 }
 
 function detectMicroSegs(frames, audioDuration) {
-  const threshold   = adaptiveThreshold(frames)
-  const minPauseF   = Math.ceil(MIN_PAUSE / FRAME_MS)
-  const minSegF     = Math.ceil(MIN_SEG  / FRAME_MS)
-  const frameToSec  = i => i * FRAME_MS / 1000
+  const threshold  = adaptiveThreshold(frames)
+  const minPauseF  = Math.ceil(MIN_PAUSE / FRAME_MS)
+  const minSegF    = Math.ceil(MIN_SEG   / FRAME_MS)
+  const frameToSec = i => i * FRAME_MS / 1000
 
   const segs       = []
   let inSpeech     = false
@@ -59,11 +53,22 @@ function detectMicroSegs(frames, audioDuration) {
     }
   }
 
+  // Close last open segment
   if (inSpeech && frames.length - segStart >= minSegF) {
     segs.push({ start: frameToSec(segStart), end: frameToSec(frames.length) })
   }
 
-  // Fallback: entire audio as one segment
+  // ── FIX: extend first segment back to 0.0 if speech starts within 3s ──────
+  // Captures words like "Ketdik aka." that start right at the beginning
+  if (segs.length > 0 && segs[0].start <= 3.0) {
+    segs[0] = { ...segs[0], start: 0.0 }
+  }
+
+  // ── FIX: extend last segment to audioDuration if gap < 3s ─────────────────
+  if (segs.length > 0 && audioDuration - segs[segs.length-1].end <= 3.0) {
+    segs[segs.length-1] = { ...segs[segs.length-1], end: audioDuration }
+  }
+
   if (segs.length === 0) {
     segs.push({ start: 0, end: audioDuration })
   }
@@ -72,6 +77,9 @@ function detectMicroSegs(frames, audioDuration) {
 }
 
 function groupIntoChunks(microSegs, chunkSec) {
+  // chunkSec from slider (default 15-30s) — controls Gemini request size
+  // Smaller = more requests but faster parallel processing
+  // Larger = fewer requests but more context per request (better for continuous speech)
   const chunks   = []
   let current    = []
   let chunkStart = microSegs[0].start
@@ -92,22 +100,19 @@ export async function segmentAudio(file, chunkSec = 20, onProgress) {
   onProgress && onProgress(5, 'Segmenter: декодирование...')
 
   const arrayBuf = await file.arrayBuffer()
-
-  // Use OfflineAudioContext — works everywhere, no WASM
-  const offCtx  = new OfflineAudioContext(1, 1, 16000)
-  const decoded = await offCtx.decodeAudioData(arrayBuf)
+  const offCtx   = new OfflineAudioContext(1, 1, 16000)
+  const decoded  = await offCtx.decodeAudioData(arrayBuf)
 
   onProgress && onProgress(30, 'Segmenter: анализ энергии...')
-  const channelData = decoded.getChannelData(0)
-  const frames      = analyzeEnergy(channelData, decoded.sampleRate)
+  const frames = analyzeEnergy(decoded.getChannelData(0), decoded.sampleRate)
 
   onProgress && onProgress(60, 'Segmenter: поиск пауз...')
   const microSegs = detectMicroSegs(frames, decoded.duration)
 
-  onProgress && onProgress(80, `Segmenter: ${microSegs.length} микро-сег → группировка...`)
+  onProgress && onProgress(80, `Segmenter: ${microSegs.length} микро-сег → группировка по ${chunkSec}с...`)
   const rawChunks = groupIntoChunks(microSegs, chunkSec)
 
-  // Assign flag IDs and build flagMap
+  // Assign flag IDs
   const flagMap = new Map()
   const chunks  = rawChunks.map((chunk, ci) => {
     const cStr    = String(ci + 1).padStart(3, '0')

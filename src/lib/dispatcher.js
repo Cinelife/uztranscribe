@@ -1,6 +1,6 @@
 /**
  * v12 Dispatcher — parallel Gemini workers with flag-based prompts
- * Validator layer: retries missing flags, normalizes ID typos
+ * Validator: retry partial AND full misses, normalize flag typos
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
@@ -14,8 +14,8 @@ function normalizeFlag(raw, knownSet) {
   if (knownSet.has(s)) return s
   const m = s.match(/^0*(\d+)\$0*(\d+)$/)
   if (m) {
-    const candidate = `${m[1].padStart(3,'0')}$${m[2].padStart(3,'0')}`
-    if (knownSet.has(candidate)) return candidate
+    const c = `${m[1].padStart(3,'0')}$${m[2].padStart(3,'0')}`
+    if (knownSet.has(c)) return c
   }
   return null
 }
@@ -24,10 +24,11 @@ function buildPrompt(flagIds, langName, dur) {
   const sample = flagIds.slice(0,2).map(id => `{"id":"${id}","text":"..."}`).join(',')
   return (
     `Transcribe this ${langName} audio clip (${dur.toFixed(1)}s).\n` +
-    `It contains ${flagIds.length} pre-detected speech segment(s).\n` +
-    `Return ONLY a raw JSON array — no markdown, no explanation.\n\n` +
-    `Use EXACTLY these IDs: ${flagIds.join(', ')}\n` +
-    `If a segment has no speech return {"id":"...","text":""}.\n\n` +
+    `It has ${flagIds.length} speech segment(s) — return ALL of them.\n` +
+    `IMPORTANT: include ALL speech, repetitions, corrections, filler words.\n` +
+    `Return ONLY raw JSON array, no markdown.\n\n` +
+    `Segment IDs (use EXACTLY as-is): ${flagIds.join(', ')}\n` +
+    `Silent segment → {"id":"...","text":""}\n\n` +
     `Format: [${sample}${flagIds.length > 2 ? ',...' : ''}]`
   )
 }
@@ -76,6 +77,7 @@ async function processChunk({ apiKey, audioBuf, t0, t1, flagIds, langName, onLog
   const b64 = await blobToBase64(sliceToWav(audioBuf, t0, t1))
   const dur  = t1 - t0
 
+  // First attempt
   const parsed = await callGemini(apiKey, b64, flagIds, langName, dur)
   for (const item of parsed) {
     if (!item?.id) continue
@@ -86,16 +88,21 @@ async function processChunk({ apiKey, audioBuf, t0, t1, flagIds, langName, onLog
   }
 
   const missing = flagIds.filter(id => !resultMap.has(id))
-  if (missing.length > 0 && missing.length < flagIds.length) {
-    onLog(`    ↻ ${label}: ${missing.length} флагов пропущено → повтор`, 'wa')
-    const retried = await callGemini(apiKey, b64, missing, langName, dur)
+
+  // ── FIX: retry if ANY flags missing (including 0/N case) ─────────────────
+  if (missing.length > 0) {
+    const retryIds = missing.length === flagIds.length ? flagIds : missing
+    onLog(`    ↻ ${label}: ${missing.length}/${flagIds.length} флагов пропущено → повтор`, 'wa')
+    await sleep(500) // brief pause before retry
+    const retried = await callGemini(apiKey, b64, retryIds, langName, dur)
     for (const item of retried) {
       if (!item?.id) continue
-      const norm = normalizeFlag(item.id, new Set(missing))
+      const norm = normalizeFlag(item.id, new Set(retryIds))
       if (norm) resultMap.set(norm, (item.text||'').trim())
     }
   }
 
+  // Fill any still-missing with empty (truly silent)
   for (const id of flagIds) {
     if (!resultMap.has(id)) resultMap.set(id, '')
   }
@@ -114,6 +121,7 @@ export async function dispatchChunks({
 
   await new Promise(resolve => {
     let active = 0, nextCi = 0
+
     function launch() {
       while (active < CONCURRENCY && nextCi < chunks.length) {
         if (stopFlagRef?.current) break
@@ -122,6 +130,7 @@ export async function dispatchChunks({
         const label = `chunk ${ci+1}/${chunks.length}`
         const flagIds = chunk.segments.map(s => s.flagId)
         active++
+
         sleep(ci % CONCURRENCY * 300)
           .then(() => {
             onLog(`    → ${label} [${chunk.t0.toFixed(1)}–${chunk.t1.toFixed(1)}с, ${flagIds.length} флагов]`, 'dm')
@@ -143,6 +152,7 @@ export async function dispatchChunks({
       }
       if (active === 0) resolve()
     }
+
     launch()
   })
 
