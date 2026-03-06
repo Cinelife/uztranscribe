@@ -120,6 +120,9 @@ export async function transcribeGemini(file, key, lang, chunkSec, maxChars, preC
           : await geminiGenerateChunk(key, b64, dur, langName, maxChars, onLog, buildFallbackPrompt(dur, langName))
         segs = Array.isArray(r) ? r : (r && typeof r === "object" && "text" in r ? [r] : [])
         segs = segs.filter(s => parseFloat(s.start) >= -0.5 && parseFloat(s.start) < dur + 0.5)
+        // Filter prompt leaks — Gemini sometimes echoes the prompt back as a segment
+        const PROMPT_LEAK = /transcribe|return only|json array|no speech|raw json|markdown|duration:/i
+        segs = segs.filter(s => !PROMPT_LEAK.test(s.text || ''))
         if (segs.length > 0) break
         if (att < 3) { onLog(`    ↻ чанк ${ci+1} пуст, повтор (попытка ${att+1})...`, 'wa'); await sleep(1500) }
       } catch (e) {
