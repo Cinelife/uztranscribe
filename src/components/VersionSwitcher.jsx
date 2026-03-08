@@ -103,7 +103,7 @@ export default function VersionSwitcher() {
           </button>
         )
       })}
-      <div className="version-popup-footer">Хранится 10 версии · переключение мгновенное</div>
+      <div className="version-popup-footer">Хранится 3 версии · переключение мгновенное</div>
     </div>,
     document.body
   )
