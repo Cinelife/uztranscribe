@@ -1,14 +1,19 @@
 import { useRef, useState, useCallback } from 'react'
-import { transcribeEL }        from '../lib/elevenlabs.js'
-import { transcribeGemini }    from '../lib/gemini.js'
+import { transcribeEL }         from '../lib/elevenlabs.js'
+import { transcribeGemini }     from '../lib/gemini.js'
 import { transcribeOpenRouter } from '../lib/openrouter.js'
 import { buildSrt, downloadSrt } from '../lib/srtUtils.js'
-import { decodeAudio, sleep }  from '../lib/audioUtils.js'
-import { getVoskBoundaries }   from '../lib/vosk.js'
-import { segmentAudio }        from '../lib/segmenter.js'
-import { segmentAudioSilero }  from '../lib/sileroVad.js'
-import { dispatchChunks }      from '../lib/dispatcher.js'
-import { assemble }            from '../lib/assembler.js'
+import { decodeAudio, sleep }   from '../lib/audioUtils.js'
+import { getVoskBoundaries }    from '../lib/vosk.js'
+import { segmentAudio }         from '../lib/segmenter.js'
+import { segmentAudioSilero }   from '../lib/sileroVad.js'
+import { dispatchChunks }       from '../lib/dispatcher.js'
+import { assemble }             from '../lib/assembler.js'
+
+function fmt(ms) {
+  if (ms < 1000) return `${ms}мс`
+  return `${(ms/1000).toFixed(1)}с`
+}
 
 export function useBatchRunner() {
   const [log,          setLog]          = useState([])
@@ -37,7 +42,7 @@ export function useBatchRunner() {
     dedupWindow = 12, subTiming = 'vad',
     elKey, gmKey, orKey, orModel,
     voskReady, voskModelRef,
-    concurrency = 8   // v12.5: параметр параллельности
+    concurrency = 8
   }) => {
     if (!files.length) { alert('Добавь файлы'); return }
     if (prov === 'el' && !elKey) { alert('Нет ElevenLabs API Key'); return }
@@ -50,22 +55,21 @@ export function useBatchRunner() {
     setProgress(0)
     setVoskVisible(false)
 
-    const totalJobs = files.length * (prov === 'bo' ? 2 : 1)
+    const totalJobs   = files.length * (prov === 'bo' ? 2 : 1)
     let done = 0
-    const newSrtMap = {}
+    const newSrtMap   = {}
 
     const isV12    = (prov === 'gm' || prov === 'bo') && timingMode === 'v12'
     const isSilero = (prov === 'gm' || prov === 'bo') && timingMode === 'silero'
 
+    const batchT0 = performance.now()
+
     addLog('══════════════════════════════════════════════', 'dm')
     addLog(`Файлов: ${files.length} | Провайдер: ${prov.toUpperCase()} | Язык: ${lang}`, 'in')
-    addLog(`Символов на строку: ${maxChars} | Чанк: ${chunkSec}с | Concurrency: ${concurrency}`, 'dm')
-    if (isSilero)
-      addLog(`Silero VAD: ✓ активен (нейросеть → флаги → Gemini)`, 'pu')
-    else if (isV12)
-      addLog(`v12 Flag-Segmenter: ✓ активен (OfflineAudioContext → флаги → Gemini)`, 'pu')
-    else if (timingMode === 'vosk' && voskReady)
-      addLog(`Vosk 2-pass: ✓ активен`, 'ok')
+    addLog(`Символов: ${maxChars} | Чанк: ${chunkSec}с | Concurrency: ${concurrency}`, 'dm')
+    if (isSilero) addLog(`Silero VAD ✓`, 'pu')
+    else if (isV12) addLog(`v12 Flag-Segmenter ✓`, 'pu')
+    else if (timingMode === 'vosk' && voskReady) addLog(`Vosk 2-pass ✓`, 'ok')
     addLog('══════════════════════════════════════════════', 'dm')
 
     for (let fi = 0; fi < files.length; fi++) {
@@ -76,34 +80,39 @@ export function useBatchRunner() {
       for (const p of providers) {
         if (stopFlagRef.current) break
         const provName = p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'
-        addLog(`[${fi+1}/${files.length}] ${file.name} (${provName})`, 'in')
+        const fileT0   = performance.now()
+        addLog(``, 'dm')
+        addLog(`▶ [${fi+1}/${files.length}] ${file.name}  (${provName})`, 'in')
 
         try {
           let segs = []
 
           if (p === 'el') {
+            const t0 = performance.now()
             segs = await transcribeEL(file, elKey, lang, maxChars, addLog)
+            addLog(`  ⏱ ElevenLabs: ${fmt(Math.round(performance.now()-t0))}`, 'pu')
 
           } else if (p === 'gm') {
 
             if (isV12 || isSilero) {
-              // ── v12 / Silero pipeline ─────────────────────────────────────
-
-              const segLabel = isSilero ? 'Silero VAD' : 'Segmenter'
-              addLog(`  Phase 1 — ${segLabel}: анализ аудио...`, 'pu')
+              // ── Phase 1: Segment ──────────────────────────────────────────
+              const segLabel = isSilero ? 'Silero VAD' : 'v12 Segmenter'
+              addLog(`  Phase 1 — ${segLabel}...`, 'pu')
               setVoskVisible(true)
+              const p1T0 = performance.now()
 
               const { flagMap, chunks, totalMicroSegs } = isSilero
                 ? await segmentAudioSilero(file, chunkSec, minPause,
-                    (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') },
-                    addLog)
+                    (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') }, addLog)
                 : await segmentAudio(file, chunkSec, minPause,
                     (pct, txt) => { setVoskPct(pct); setVoskText(txt) })
               setVoskVisible(false)
-              addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков`, 'ok')
+              const p1Ms = Math.round(performance.now() - p1T0)
+              addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков | ⏱ ${fmt(p1Ms)}`, 'ok')
 
-              // Phase 2: Dispatch — v12.5 передаём concurrency
-              addLog(`  Phase 2 — Dispatcher: ${chunks.length} запросов (x${concurrency} параллельно)...`, 'gm-cl')
+              // ── Phase 2: Dispatch ─────────────────────────────────────────
+              addLog(`  Phase 2 — Dispatcher (×${concurrency} параллельно)...`, 'gm-cl')
+              const p2T0     = performance.now()
               const audioBuf = await decodeAudio(file)
 
               const { allText: textMap, fallbackEnds } = await dispatchChunks({
@@ -115,10 +124,13 @@ export function useBatchRunner() {
                   setProgressText(txt)
                 },
                 stopFlagRef,
-                concurrency   // v12.5
+                concurrency
               })
+              const p2Ms = Math.round(performance.now() - p2T0)
+              addLog(`  Phase 2 ✓ | ⏱ ${fmt(p2Ms)}`, 'ok')
 
-              // Phase 3: Assemble
+              // ── Phase 3: Assemble ─────────────────────────────────────────
+              const p3T0 = performance.now()
               addLog(`  Phase 3 — Assembler...`, 'pu')
               for (const [fid, endTime] of fallbackEnds) {
                 const entry = flagMap.get(fid)
@@ -126,16 +138,21 @@ export function useBatchRunner() {
               }
               const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode, dedupWindow, isSilero ? subTiming : 'vad')
               const segCount   = (srtContent.match(/^\d+$/mg) || []).length
-              addLog(`  Phase 3 ✓ — ${segCount} сегментов`, 'ok')
+              const p3Ms       = Math.round(performance.now() - p3T0)
+              addLog(`  Phase 3 ✓ — ${segCount} сегментов | ⏱ ${fmt(p3Ms)}`, 'ok')
+
+              const totalFileMs = Math.round(performance.now() - fileT0)
+              addLog(`  ⏱ ИТОГО файл: Phase1=${fmt(p1Ms)} + Phase2=${fmt(p2Ms)} + Phase3=${fmt(p3Ms)} = ${fmt(totalFileMs)}`, 'pu')
 
               segs = parseSrt(srtContent)
 
             } else {
-              // ── Smart Silence / Vosk path ─────────────────────────────────
+              // ── Smart / Vosk path ─────────────────────────────────────────
               let preChunks = null
               if (timingMode === 'vosk' && voskReady && voskModelRef?.current) {
-                addLog(`  Pass 1 — Vosk: ищем границы...`, 'pu')
+                addLog(`  Pass 1 — Vosk...`, 'pu')
                 setVoskVisible(true)
+                const vT0 = performance.now()
                 try {
                   preChunks = await getVoskBoundaries(
                     file, voskModelRef.current, addLog,
@@ -143,13 +160,16 @@ export function useBatchRunner() {
                     () => setVoskVisible(false),
                     stopFlagRef
                   )
+                  addLog(`  Vosk ✓ | ⏱ ${fmt(Math.round(performance.now()-vT0))}`, 'ok')
                 } catch (e) {
                   addLog(`  ⚠ Vosk: ${e.message}`, 'wa')
                   setVoskVisible(false)
                 }
               }
+              const gmT0 = performance.now()
               segs = await transcribeGemini(file, gmKey, lang, chunkSec, maxChars,
                 preChunks, addLog, t => setProgressText(t), stopFlagRef)
+              addLog(`  ⏱ Gemini (smart): ${fmt(Math.round(performance.now()-gmT0))}`, 'pu')
             }
 
           } else if (p === 'or') {
@@ -160,13 +180,14 @@ export function useBatchRunner() {
                 preChunks = await getVoskBoundaries(
                   file, voskModelRef.current, addLog,
                   (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
-                  () => setVoskVisible(false),
-                  stopFlagRef
+                  () => setVoskVisible(false), stopFlagRef
                 )
               } catch (_) { setVoskVisible(false) }
             }
+            const orT0 = performance.now()
             segs = await transcribeOpenRouter(file, orKey, orModel, lang, chunkSec, maxChars,
               preChunks, addLog, t => setProgressText(t), stopFlagRef)
+            addLog(`  ⏱ OpenRouter: ${fmt(Math.round(performance.now()-orT0))}`, 'pu')
           }
 
           // Clamp overlaps
@@ -183,7 +204,9 @@ export function useBatchRunner() {
           newSrtMap[srtName] = content
           done++
           setProgress(done / totalJobs * 100)
-          addLog(`  ✓ ${srtName} (${segs.length} сегментов)`, 'ok')
+
+          const fileTotalMs = Math.round(performance.now() - fileT0)
+          addLog(`  ✓ ${srtName} — ${segs.length} сег | ⏱ файл: ${fmt(fileTotalMs)}`, 'ok')
 
         } catch (e) {
           addLog(`  ✗ ОШИБКА: ${e.message}`, 'er')
@@ -193,12 +216,13 @@ export function useBatchRunner() {
       }
     }
 
+    const batchMs = Math.round(performance.now() - batchT0)
     setLastSrtMap(prev => ({ ...prev, ...newSrtMap }))
     setProgress(100)
     setStatusText(`✓ ${done}/${totalJobs} файлов`)
     addLog('', '')
     addLog('══════════════════════════════════════════════', 'dm')
-    addLog(`  ГОТОВО: ${done}/${totalJobs}`, done===totalJobs?'ok':'wa')
+    addLog(`  ГОТОВО: ${done}/${totalJobs} | ⏱ Общее время: ${fmt(batchMs)}`, done===totalJobs?'ok':'wa')
     addLog('  SRT → папка Downloads', 'ok')
     if (done) addLog('  💡 Можно перевести результат ниже ↓', 'pu')
     addLog('══════════════════════════════════════════════', 'dm')

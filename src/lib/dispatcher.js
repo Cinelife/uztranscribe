@@ -1,10 +1,6 @@
 /**
  * v12.5 Dispatcher — timestamp-based prompt
- * Gemini receives: audio chunk + exact time ranges per segment
- * Returns: array of strings, one per segment
- * No hallucination: Gemini listens to specific time window, not guessing
- *
- * v12.5: CONCURRENCY теперь параметр (дефолт 8, было 3)
+ * v12.5.1: подробное логирование времени на каждый чанк и суммарно
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
@@ -12,6 +8,11 @@ import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
 const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Tajik' }
 const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']
 const PROMPT_LEAK = /transcribe this|return only|json array|no speech|raw json|markdown/i
+
+function fmt(ms) {
+  if (ms < 1000) return `${ms}мс`
+  return `${(ms/1000).toFixed(1)}с`
+}
 
 function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
   const n    = segments.length
@@ -51,7 +52,7 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
             { inline_data: { mime_type: 'audio/wav', data: b64wav } },
             { text: prompt }
           ]}],
-          generationConfig: { temperature: 0, maxOutputTokens: 1024 }  // v12.5: 2048→1024
+          generationConfig: { temperature: 0, maxOutputTokens: 1024 }
         })
       })
       if (r.status === 429) { await sleep(3000); continue }
@@ -73,30 +74,34 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
       }
       if (!Array.isArray(parsed)) continue
 
-      // Normalize: strings only, filter prompt leaks
       const texts = parsed
         .map(x => (typeof x === 'string' ? x : (x?.text || '')).trim())
         .map(t => PROMPT_LEAK.test(t) ? '' : t)
         .slice(0, n)
 
-      return texts
+      return { texts, model }
     } catch (_) { continue }
   }
-  return []
+  return { texts: [], model: '?' }
 }
 
 export async function dispatchChunks({
   audioBuf, chunks, apiKey, lang, chunkSec, dedupWindow = 12,
   onLog, onProgress, stopFlagRef,
-  concurrency = 8   // v12.5: дефолт 8, было 3. Tier1 = 1000 RPM → 8 параллельно ≈ безопасно
+  concurrency = 8
 }) {
-  const langName = LANG_MAP[lang] || lang
-  const allText    = new Map()  // flagId → text
-  const fallbackEnds = new Map()  // flagId → overridden end time
+  const langName   = LANG_MAP[lang] || lang
+  const allText    = new Map()
+  const fallbackEnds = new Map()
   let done = 0
 
-  // Stagger delay: при высоком concurrency уменьшаем задержку между запросами
-  const staggerMs = Math.max(100, Math.floor(300 / concurrency * 3))
+  const staggerMs  = Math.max(100, Math.floor(300 / concurrency * 3))
+  const dispatchT0 = performance.now()
+
+  // Счётчики для суммарной статистики
+  const chunkTimes = []  // массив времён каждого чанка в мс
+
+  onLog(`  ⏱ Dispatcher: ${chunks.length} чанков × ${concurrency} параллельно`, 'dm')
 
   await new Promise(resolve => {
     let active = 0, nextCi = 0
@@ -106,7 +111,7 @@ export async function dispatchChunks({
         if (stopFlagRef?.current) break
         const ci    = nextCi++
         const chunk = chunks[ci]
-        const segs  = chunk.segments  // [{flagId, start, end}]
+        const segs  = chunk.segments
         const n     = segs.length
         const t0    = chunk.t0
         const dur   = chunk.t1 - t0
@@ -117,42 +122,59 @@ export async function dispatchChunks({
           localEnd:   parseFloat((s.end   - t0).toFixed(2))
         }))
 
+        const chunkT0 = performance.now()
+
         sleep(ci % concurrency * staggerMs)
           .then(async () => {
-            onLog(`    ⟳ чанк ${ci+1}/${chunks.length} [${t0.toFixed(1)}–${chunk.t1.toFixed(1)}s]`, 'dm')
-            const wav  = sliceToWav(audioBuf, t0, chunk.t1)
-            const b64  = await blobToBase64(wav)
+            onLog(`    ⟳ [${ci+1}/${chunks.length}] ${t0.toFixed(1)}–${chunk.t1.toFixed(1)}с (${n} сег)`, 'dm')
 
-            let texts = []
+            const prepT0 = performance.now()
+            const wav    = sliceToWav(audioBuf, t0, chunk.t1)
+            const b64    = await blobToBase64(wav)
+            const prepMs = Math.round(performance.now() - prepT0)
+
+            let texts = [], usedModel = '?', attempts = 0
+
+            const apiT0 = performance.now()
             for (let att = 1; att <= 3; att++) {
-              texts = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
+              attempts = att
+              const res = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
+              texts = res.texts; usedModel = res.model
               if (texts.length === n) break
               if (att < 3) {
-                // Fallback: весь чанк как один сегмент
                 if (att === 2) {
                   const fallbackSegs = [{ localStart: 0, localEnd: dur }]
-                  texts = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow)
-                  if (texts.length > 0) {
-                    // Назначаем весь текст первому сегменту, остальные пустые
-                    const fullText = texts[0]
+                  const res2 = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow)
+                  if (res2.texts.length > 0) {
+                    usedModel = res2.model
+                    const fullText = res2.texts[0]
                     segs.forEach((seg, i) => {
                       allText.set(seg.flagId, i === 0 ? fullText : '')
                       if (i === 0) fallbackEnds.set(seg.flagId, chunk.t1)
                     })
+                    const totalMs = Math.round(performance.now() - chunkT0)
+                    const apiMs   = Math.round(performance.now() - apiT0)
+                    chunkTimes.push(totalMs)
                     done++
                     onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
+                    onLog(`    ✓ [${ci+1}] fallback→1сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)} | ${usedModel}`, 'wa')
                     return
                   }
                 }
                 await sleep(1500)
               }
             }
+            const apiMs   = Math.round(performance.now() - apiT0)
+            const totalMs = Math.round(performance.now() - chunkT0)
+            chunkTimes.push(totalMs)
 
-            // Zip texts → flagIds
             segs.forEach((seg, i) => allText.set(seg.flagId, texts[i] || ''))
             done++
             onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
-            onLog(`    ✓ чанк ${ci+1} → ${texts.filter(Boolean).length}/${n} сег.`, 'dm')
+
+            const ok = texts.filter(Boolean).length
+            const attStr = attempts > 1 ? ` ×${attempts}попыток` : ''
+            onLog(`    ✓ [${ci+1}] ${ok}/${n}сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)}${attStr} | ${usedModel}`, 'dm')
           })
           .then(() => {
             active--
@@ -170,6 +192,15 @@ export async function dispatchChunks({
     }
     launch()
   })
+
+  // ── Суммарная статистика Dispatcher ──────────────────────────────────────
+  const totalMs  = Math.round(performance.now() - dispatchT0)
+  const avgMs    = chunkTimes.length ? Math.round(chunkTimes.reduce((a,b)=>a+b,0)/chunkTimes.length) : 0
+  const minMs    = chunkTimes.length ? Math.min(...chunkTimes) : 0
+  const maxMs    = chunkTimes.length ? Math.max(...chunkTimes) : 0
+  const sumMs    = chunkTimes.reduce((a,b)=>a+b,0)
+  onLog(`  ⏱ Dispatcher итого: ${fmt(totalMs)} стены | последовательно было бы ~${fmt(sumMs)}`, 'pu')
+  onLog(`  ⏱ Чанки: avg=${fmt(avgMs)} min=${fmt(minMs)} max=${fmt(maxMs)} | ускорение ×${(sumMs/totalMs).toFixed(1)}`, 'pu')
 
   return { allText, fallbackEnds }
 }
