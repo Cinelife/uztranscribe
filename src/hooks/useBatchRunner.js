@@ -82,22 +82,30 @@ export function useBatchRunner() {
         const provName = p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'
         const fileT0   = performance.now()
 
-        // Длительность файла — для всех провайдеров
+        // Длительность файла + кэш AudioBuffer для Phase 2
         let fileDurStr = ''
         let audioBufCached = null
         try {
-          // Быстрый способ — Audio элемент (не требует полного декодирования)
-          const url = URL.createObjectURL(file)
-          const totalSec = await new Promise((res, rej) => {
-            const a = new Audio()
-            a.onloadedmetadata = () => { URL.revokeObjectURL(url); res(a.duration) }
-            a.onerror = rej
-            a.src = url
-          })
+          audioBufCached = await decodeAudio(file)
+          const totalSec = audioBufCached.duration
           const mm = Math.floor(totalSec / 60)
           const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
           fileDurStr = ` (${mm}:${ss})`
-        } catch (_) {}
+        } catch (_) {
+          // decodeAudio не сработал — пробуем Audio элемент только для длительности
+          try {
+            const url = URL.createObjectURL(file)
+            const totalSec = await new Promise((res, rej) => {
+              const a = new Audio()
+              a.onloadedmetadata = () => { URL.revokeObjectURL(url); res(a.duration) }
+              a.onerror = rej
+              a.src = url
+            })
+            const mm = Math.floor(totalSec / 60)
+            const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
+            fileDurStr = ` (${mm}:${ss})`
+          } catch (_) {}
+        }
 
         addLog(``, 'dm')
         addLog(`▶ [${fi+1}/${files.length}] ${file.name}${fileDurStr}  (${provName})`, 'in')
