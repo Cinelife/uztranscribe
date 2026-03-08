@@ -86,8 +86,14 @@ export function useBatchRunner() {
         let fileDurStr = ''
         let audioBufCached = null
         try {
-          audioBufCached = await decodeAudio(file)
-          const totalSec = audioBufCached.duration
+          // Быстрый способ — Audio элемент (не требует полного декодирования)
+          const url = URL.createObjectURL(file)
+          const totalSec = await new Promise((res, rej) => {
+            const a = new Audio()
+            a.onloadedmetadata = () => { URL.revokeObjectURL(url); res(a.duration) }
+            a.onerror = rej
+            a.src = url
+          })
           const mm = Math.floor(totalSec / 60)
           const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
           fileDurStr = ` (${mm}:${ss})`
