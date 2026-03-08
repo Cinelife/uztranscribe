@@ -2,22 +2,17 @@ import { useEffect, useRef } from 'react'
 
 function buildLogFilename(log) {
   const lines = log.map(e => e.msg)
-  // Имя файла: ▶ [1/1] MohirDEV Test.mp3 (3:06) (Gemini)
   const fileMatch = lines.join('\n').match(/▶ \[\d+\/\d+\] (.+?)(?:\s+\([\d:]+\))?(?:\s+\(.+?\))?\s*$/)
   const rawName   = fileMatch ? fileMatch[1].replace(/\.[^.]+$/, '').trim() : 'log'
-  // Провайдер
   const provMatch = lines.join('\n').match(/Провайдер: (\w+)/)
   const prov      = provMatch ? provMatch[1] : ''
-  // Метод таймкода
   let method = ''
-  if (lines.some(l => /Silero VAD/.test(l)))        method = 'silero'
+  if (lines.some(l => /Silero VAD/.test(l)))         method = 'silero'
   else if (lines.some(l => /v12.*Segmenter/.test(l))) method = 'v12seg'
-  else if (lines.some(l => /Vosk/.test(l)))          method = 'vosk'
-  else if (lines.some(l => /ElevenLabs/.test(l)))    method = 'el'
-  // Общее время
+  else if (lines.some(l => /Vosk/.test(l)))           method = 'vosk'
+  else if (lines.some(l => /ElevenLabs/.test(l)))     method = 'el'
   const timeMatch = lines.join('\n').match(/Общее время: ([\d.,]+с)/)
   const totalTime = timeMatch ? timeMatch[1].replace('.', '_') : ''
-  // Собираем имя
   const parts = [rawName, prov, method, totalTime].filter(Boolean)
   return parts.join('_') + '.txt'
 }
@@ -74,8 +69,12 @@ export default function ProgressCard({
         }
       </div>
 
-      {log.length > 0 && (
-        <div style={{ display:'flex', justifyContent:'flex-end', marginTop:'4px' }}>
+      <div className="ar">
+        <button className="btn bp" onClick={onStart} disabled={running}>▶ Запустить</button>
+        <button className="btn bs" onClick={onStop} disabled={!running}>⏹ Стоп</button>
+        <span className="st">{statusText}</span>
+        <button className="btn bx" onClick={clearLog}>Очистить лог</button>
+        {log.length > 0 && (
           <button
             onClick={downloadLog}
             title="Скачать лог"
@@ -84,19 +83,12 @@ export default function ProgressCard({
               background:'var(--bg3)', border:'1px solid var(--brd)',
               borderRadius:'6px', cursor:'pointer', color:'var(--mu)',
               display:'flex', alignItems:'center', justifyContent:'center',
-              fontSize:'16px', lineHeight:1
+              fontSize:'16px', lineHeight:1, flexShrink:0
             }}
             onMouseEnter={e => e.currentTarget.style.color='var(--txt)'}
             onMouseLeave={e => e.currentTarget.style.color='var(--mu)'}
           >⬇</button>
-        </div>
-      )}
-
-      <div className="ar">
-        <button className="btn bp" onClick={onStart} disabled={running}>▶ Запустить</button>
-        <button className="btn bs" onClick={onStop} disabled={!running}>⏹ Стоп</button>
-        <span className="st">{statusText}</span>
-        <button className="btn bx" onClick={clearLog}>Очистить лог</button>
+        )}
       </div>
     </div>
   )
