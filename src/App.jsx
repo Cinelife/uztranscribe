@@ -10,15 +10,10 @@ import { useTranslation }    from './hooks/useTranslation.js'
 import { OR_MODELS }         from './lib/openrouter.js'
 
 export default function App() {
-  // ── API ключи — НИКОГДА не хардкодить значения по умолчанию ──────────────
-  // localStorage.getItem вернёт null если ключ не сохранён → fallback ''
-  // Если старый коммит содержал ключ: удали из localStorage вручную:
-  //   localStorage.removeItem('uz_el'); localStorage.removeItem('uz_gm'); localStorage.removeItem('uz_or')
   const [elKey, setElKey] = useState(() => localStorage.getItem('uz_el') || '')
   const [gmKey, setGmKey] = useState(() => localStorage.getItem('uz_gm') || '')
   const [orKey, setOrKey] = useState(() => localStorage.getItem('uz_or') || '')
 
-  // ── Настройки транскрипции ────────────────────────────────────────────────
   const [prov,        setProv]        = useState('el')
   const [lang,        setLang]        = useState('uz')
   const [chunkSec,    setChunkSec]    = useState(30)
@@ -29,64 +24,80 @@ export default function App() {
   const [dedupWindow, setDedupWindow] = useState(12)
   const [subTiming,   setSubTiming]   = useState('vad')
   const [timingMode,  setTimingMode]  = useState('smart')
-  const [orModel,     setOrModel]     = useState(OR_MODELS[0]?.id || '')
+  const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
 
-  // ── v12.5: Concurrency — параллельность запросов к Gemini ────────────────
-  // Дефолт 8. Tier1 = 1000 RPM → 8 параллельно безопасно.
-  // Для Free tier рекомендуется 2-3.
+  // v12.5: Concurrency — параллельность запросов к Gemini
   const [concurrency, setConcurrency] = useState(8)
 
-  // ── Vosk (legacy) ─────────────────────────────────────────────────────────
+  const [files,        setFiles]        = useState([])
+  const [fileStatuses, setFileStatuses] = useState({})
+
   const [voskReady, setVoskReady] = useState(false)
-  const voskModelRef = useRef(null)
+  const voskModelRef              = useRef(null)
+
+  const [trProvider, setTrProvider] = useState('gm')
+  const [trSrc,      setTrSrc]      = useState('last')
+  const [trPair,     setTrPair]     = useState('uz|ru')
 
   const {
     log, clearLog,
     progress, progressText, statusText,
     voskVisible, voskPct, voskText,
-    running, lastSrtMap, files, setFiles, fileStatuses,
-    handleStart, stopBatch
-  } = useBatchRunner({
-    elKey, gmKey, orKey,
-    prov, lang, chunkSec, maxChars, minPause,
-    mergeGap, mergeMode, dedupWindow, subTiming, timingMode,
-    orModel, voskReady, voskModelRef,
+    running, startBatch, stopBatch,
+    lastSrtMap
+  } = useBatchRunner()
+
+  const {
+    trLog, clearTrLog, trStatus, trRunning, startTranslate
+  } = useTranslation()
+
+  const handleStart = () => startBatch({
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
+    dedupWindow, subTiming,
+    elKey, gmKey, orKey, orModel,
+    voskReady, voskModelRef,
     concurrency   // v12.5
   })
 
-  const {
-    trLog, clearTrLog, trStatus, trRunning,
-    trProvider, setTrProvider,
-    trSrc, setTrSrc,
-    trPair, setTrPair,
-    handleTranslate
-  } = useTranslation({ gmKey, orKey, orModel, lastSrtMap })
+  const handleTranslate = ({ trFileRef }) => startTranslate({
+    gmKey, orKey, orModel,
+    trProvider, trSrc, trPair,
+    lastSrtMap, trFileRef
+  })
 
   return (
-    <div className="app">
+    <div className="wrap">
       <Header />
 
+      <div className="info">
+        📥 SRT → <strong>Downloads</strong> автоматически &nbsp;|&nbsp;
+        💰 <strong>Gemini</strong> бесплатно до ~2 ч/день &nbsp;|&nbsp;
+        <strong>ElevenLabs</strong> $0.40/час &nbsp;|&nbsp;
+        🔀 <strong>OpenRouter</strong> — гибкий выбор модели &nbsp;|&nbsp;
+        🔬 <strong>Vosk 2-pass</strong> &nbsp;|&nbsp;
+        🌐 Перевод с культурной адаптацией
+      </div>
+
       <ApiKeysCard
-        elKey={elKey} setElKey={setElKey}
-        gmKey={gmKey} setGmKey={setGmKey}
-        orKey={orKey} setOrKey={setOrKey}
+        elKey={elKey} gmKey={gmKey} orKey={orKey}
+        setElKey={setElKey} setGmKey={setGmKey} setOrKey={setOrKey}
       />
 
       <SettingsCard
-        prov={prov}             setProv={setProv}
-        lang={lang}             setLang={setLang}
-        chunkSec={chunkSec}     setChunkSec={setChunkSec}
-        maxChars={maxChars}     setMaxChars={setMaxChars}
-        minPause={minPause}     setMinPause={setMinPause}
-        mergeGap={mergeGap}     setMergeGap={setMergeGap}
-        mergeMode={mergeMode}   setMergeMode={setMergeMode}
+        prov={prov}           setProv={setProv}
+        lang={lang}           setLang={setLang}
+        chunkSec={chunkSec}   setChunkSec={setChunkSec}
+        maxChars={maxChars}   setMaxChars={setMaxChars}
+        minPause={minPause}   setMinPause={setMinPause}
+        mergeGap={mergeGap}   setMergeGap={setMergeGap}
+        mergeMode={mergeMode}  setMergeMode={setMergeMode}
         dedupWindow={dedupWindow} setDedupWindow={setDedupWindow}
-        subTiming={subTiming}   setSubTiming={setSubTiming}
+        subTiming={subTiming}  setSubTiming={setSubTiming}
         timingMode={timingMode} setTimingMode={setTimingMode}
-        orModel={orModel}       setOrModel={setOrModel}
-        voskReady={voskReady}   setVoskReady={setVoskReady}
+        orModel={orModel}     setOrModel={setOrModel}
+        voskReady={voskReady} setVoskReady={setVoskReady}
         voskModelRef={voskModelRef}
-        concurrency={concurrency} setConcurrency={setConcurrency}  // v12.5
+        concurrency={concurrency} setConcurrency={setConcurrency}
       />
 
       <FilesCard
