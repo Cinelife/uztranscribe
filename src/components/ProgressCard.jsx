@@ -74,18 +74,29 @@ export default function ProgressCard({
         }
       </div>
 
+      {log.length > 0 && (
+        <div style={{ display:'flex', justifyContent:'flex-end', marginTop:'4px' }}>
+          <button
+            onClick={downloadLog}
+            title="Скачать лог"
+            style={{
+              width:'32px', height:'32px', padding:0,
+              background:'var(--bg3)', border:'1px solid var(--brd)',
+              borderRadius:'6px', cursor:'pointer', color:'var(--mu)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:'16px', lineHeight:1
+            }}
+            onMouseEnter={e => e.currentTarget.style.color='var(--txt)'}
+            onMouseLeave={e => e.currentTarget.style.color='var(--mu)'}
+          >⬇</button>
+        </div>
+      )}
+
       <div className="ar">
         <button className="btn bp" onClick={onStart} disabled={running}>▶ Запустить</button>
         <button className="btn bs" onClick={onStop} disabled={!running}>⏹ Стоп</button>
         <span className="st">{statusText}</span>
         <button className="btn bx" onClick={clearLog}>Очистить лог</button>
-        <button
-          className="btn bx"
-          onClick={downloadLog}
-          disabled={log.length === 0}
-          title="Скачать лог"
-          style={{ padding: '0 10px', fontSize: '16px' }}
-        >⬇</button>
       </div>
     </div>
   )
