@@ -10,6 +10,8 @@ import { GM_MODELS } from './gemini.js'
 
 const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Tajik' }
 const PROMPT_LEAK = /transcribe this|return only|json array|no speech|raw json|markdown/i
+// Галлюцинации — Gemini копирует временны́е метки из промпта вместо текста
+const TIMESTAMP_HALLUC = /^[\d]{1,2}:[\d]{2}(\s+[\d]{1,2}:[\d]{2})*\s*$/
 
 function fmt(ms) {
   if (ms < 1000) return `${ms}мс`
@@ -23,8 +25,8 @@ function buildModelChain(primaryId) {
   return [primaryId, ...(found.fallback || [])]
 }
 
-async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec, dedupWindow, primaryId) {
-  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow)
+async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec, dedupWindow, primaryId, lang) {
+  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang)
   const n      = segments.length
   const chain  = buildModelChain(primaryId)
   const log    = []   // [{model, status, ms}]
@@ -82,6 +84,7 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
       const texts = parsed
         .map(x => (typeof x === 'string' ? x : (x?.text || '')).trim())
         .map(t => PROMPT_LEAK.test(t) ? '' : t)
+        .map(t => TIMESTAMP_HALLUC.test(t) ? '' : t)
         .slice(0, n)
 
       log.push({ model, status: '✓', ms })
@@ -95,7 +98,7 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
   return { texts: [], model: null, log }
 }
 
-function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
+function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang) {
   const n    = segments.length
   const list = segments.map((s, i) =>
     `  ${i+1}. ${s.localStart.toFixed(2)}s – ${s.localEnd.toFixed(2)}s`
@@ -107,10 +110,12 @@ function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
     `${list}\n\n` +
     `Transcription rules:\n` +
     `- Use full linguistic intelligence: interpret abbreviations, names, terminology correctly.\n` +
+    `- Proper nouns: apply correct ${langName} spelling.\n` +
     (dedupWindow === 0
       ? `- If audio repeats a phrase or chorus — transcribe it again. Repetition is real content, not an error.\n`
       : `- Do NOT repeat text from previous segments — transcribe only what you hear in THIS clip.\n`) +
-    `- Use "" only for completely silent or inaudible segments.\n\n` +
+    `- Use "" ONLY for segments with NO human voice at all (pure silence, pure instrumental music with zero vocals).\n` +
+    `- If a segment has speech, rap, singing, or any human voice — ALWAYS transcribe the words, even if there is background music.\n` +
     `Output format — non-negotiable:\n` +
     `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
     `- No skipping, no merging, no extra commentary — only the array.\n\n` +
@@ -173,13 +178,13 @@ export async function dispatchChunks({
 
             const apiT0 = performance.now()
             // Попытка 1: с правильными сегментами
-            const res = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow, gmModel)
+            const res = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow, gmModel, lang)
             texts = res.texts; usedModel = res.model; attemptLog = res.log
 
             // Попытка 2 (fallback): один общий сегмент
             if (texts.length !== n) {
               const fallbackSegs = [{ localStart: 0, localEnd: dur }]
-              const res2 = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow, gmModel)
+              const res2 = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow, gmModel, lang)
               attemptLog.push(...res2.log)
               if (res2.texts.length > 0) {
                 usedModel = res2.model
