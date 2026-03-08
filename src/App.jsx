@@ -8,6 +8,7 @@ import TranslationCard       from './components/TranslationCard.jsx'
 import { useBatchRunner }    from './hooks/useBatchRunner.js'
 import { useTranslation }    from './hooks/useTranslation.js'
 import { OR_MODELS }         from './lib/openrouter.js'
+import { GM_MODELS }         from './lib/gemini.js'
 
 export default function App() {
   const [elKey, setElKey] = useState(() => localStorage.getItem('uz_el') || '')
@@ -25,6 +26,7 @@ export default function App() {
   const [subTiming,   setSubTiming]   = useState('vad')
   const [timingMode,  setTimingMode]  = useState('smart')
   const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
+  const [gmModel,     setGmModel]     = useState(GM_MODELS[0].id)
 
   // v12.5: Concurrency — параллельность запросов к Gemini
   const [concurrency, setConcurrency] = useState(8)
@@ -54,7 +56,7 @@ export default function App() {
   const handleStart = () => startBatch({
     files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
     dedupWindow, subTiming,
-    elKey, gmKey, orKey, orModel,
+    elKey, gmKey, orKey, orModel, gmModel,
     voskReady, voskModelRef,
     concurrency   // v12.5
   })
@@ -95,6 +97,7 @@ export default function App() {
         subTiming={subTiming}  setSubTiming={setSubTiming}
         timingMode={timingMode} setTimingMode={setTimingMode}
         orModel={orModel}     setOrModel={setOrModel}
+        gmModel={gmModel}     setGmModel={setGmModel}
         voskReady={voskReady} setVoskReady={setVoskReady}
         voskModelRef={voskModelRef}
         concurrency={concurrency} setConcurrency={setConcurrency}

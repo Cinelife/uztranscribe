@@ -1,11 +1,60 @@
 import { sliceToWav, blobToBase64, buildSmartChunks, sleep, decodeAudio } from './audioUtils.js'
 import { deduplicateSegs, splitLongLines } from './srtUtils.js'
 
+// v12.5.1: модели от нового к старому. id = строка для API.
+// priceHr = примерная стоимость 1 часа аудио (90K аудио-токенов + 40K текст)
+// freeRpm = лимит на Free tier, tier1Rpm = Tier 1
+// fallback = цепочка резервных моделей при 429/ошибке
 export const GM_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash-latest'
+  {
+    id:        'gemini-2.5-flash-lite',
+    label:     'Gemini 2.5 Flash Lite',
+    priceHr:   '$0.031',
+    note:      'Новейший · самый дешёвый · быстрый',
+    freeRpm:   10,
+    tier1Rpm:  2000,
+    fallback:  ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
+  },
+  {
+    id:        'gemini-2.5-flash',
+    label:     'Gemini 2.5 Flash',
+    priceHr:   '$0.119',
+    note:      'Лучшее качество · мыслит',
+    freeRpm:   10,
+    tier1Rpm:  1000,
+    fallback:  ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+  },
+  {
+    id:        'gemini-2.0-flash',
+    label:     'Gemini 2.0 Flash',
+    priceHr:   '$0.071',
+    note:      'Стабильный · быстрый · рекомендуется',
+    freeRpm:   15,
+    tier1Rpm:  2000,
+    fallback:  ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+  },
+  {
+    id:        'gemini-2.0-flash-lite',
+    label:     'Gemini 2.0 Flash Lite',
+    priceHr:   '$0.040',
+    note:      'Эконом · очень быстрый',
+    freeRpm:   30,
+    tier1Rpm:  4000,
+    fallback:  ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+  },
+  {
+    id:        'gemini-1.5-flash-latest',
+    label:     'Gemini 1.5 Flash',
+    priceHr:   '$0.010',
+    note:      'Устарел · самый дешёвый',
+    freeRpm:   15,
+    tier1Rpm:  2000,
+    fallback:  ['gemini-2.0-flash-lite', 'gemini-2.0-flash']
+  },
 ]
+
+// Для обратной совместимости (gemini.js старый путь)
+const GM_MODEL_IDS = GM_MODELS.map(m => m.id)
 
 const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Tajik' }
 
@@ -58,7 +107,7 @@ function parseGeminiJSON(raw) {
 
 export async function geminiGenerateChunk(key, b64, dur, langName, maxChars, onLog, customPrompt) {
   const prompt = customPrompt || buildPrompt(dur, langName, maxChars)
-  for (const model of GM_MODELS) {
+  for (const model of GM_MODEL_IDS) {
     const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
       {
@@ -188,7 +237,7 @@ export async function translateBatch(segs, pair, key) {
   const sys    = TR_SYS[pair] || ('Translate subtitles: ' + pair)
   const prompt = sys + '\n\nПереведи субтитры. Верни ТОЛЬКО JSON-массив: [{"i":номер,"t":"перевод"}]\n- Сохраняй \\n если есть\n- Raw JSON без markdown\n\nСубтитры:\n' +
     JSON.stringify(segs.map((s, i) => ({ i, t: s.text })))
-  for (const model of GM_MODELS) {
+  for (const model of GM_MODEL_IDS) {
     const r = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
       {

@@ -1,17 +1,98 @@
 /**
- * v12.5 Dispatcher — timestamp-based prompt
- * v12.5.1: подробное логирование времени на каждый чанк и суммарно
+ * v12.5.1 Dispatcher — timestamp-based prompt
+ * - Основная модель выбирается пользователем (gmModel)
+ * - Fallback-цепочка из GM_MODELS[selected].fallback
+ * - Детальный лог каждой попытки: модель → статус/ошибка
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
+import { GM_MODELS } from './gemini.js'
 
 const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Tajik' }
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']
 const PROMPT_LEAK = /transcribe this|return only|json array|no speech|raw json|markdown/i
 
 function fmt(ms) {
   if (ms < 1000) return `${ms}мс`
   return `${(ms/1000).toFixed(1)}с`
+}
+
+// Строим цепочку: выбранная модель + её fallback
+function buildModelChain(primaryId) {
+  const found = GM_MODELS.find(m => m.id === primaryId)
+  if (!found) return [primaryId]
+  return [primaryId, ...(found.fallback || [])]
+}
+
+async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec, dedupWindow, primaryId) {
+  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow)
+  const n      = segments.length
+  const chain  = buildModelChain(primaryId)
+  const log    = []   // [{model, status, ms}]
+
+  for (const model of chain) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+    const t0  = performance.now()
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { inline_data: { mime_type: 'audio/wav', data: b64wav } },
+            { text: prompt }
+          ]}],
+          generationConfig: { temperature: 0, maxOutputTokens: 1024 }
+        })
+      })
+      const ms = Math.round(performance.now() - t0)
+
+      if (r.status === 429) {
+        log.push({ model, status: '429 квота', ms })
+        await sleep(2000)
+        continue
+      }
+      if (r.status === 503 || r.status === 504) {
+        log.push({ model, status: `${r.status} перегружен`, ms })
+        continue
+      }
+      if (!r.ok) {
+        log.push({ model, status: `${r.status} ошибка`, ms })
+        continue
+      }
+
+      const d   = await r.json()
+      const raw = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+      if (!raw) {
+        log.push({ model, status: 'пустой ответ', ms })
+        continue
+      }
+
+      let parsed
+      try {
+        let s = raw
+        if (s.includes('```')) { s = s.split('```')[1]||''; if (s.startsWith('json')) s = s.slice(4) }
+        parsed = JSON.parse(s.trim())
+      } catch (_) {
+        const m = raw.match(/\[[\s\S]*\]/)
+        if (m) try { parsed = JSON.parse(m[0]) } catch (_) { log.push({ model, status: 'JSON err', ms }); continue }
+        else { log.push({ model, status: 'JSON err', ms }); continue }
+      }
+      if (!Array.isArray(parsed)) { log.push({ model, status: 'не массив', ms }); continue }
+
+      const texts = parsed
+        .map(x => (typeof x === 'string' ? x : (x?.text || '')).trim())
+        .map(t => PROMPT_LEAK.test(t) ? '' : t)
+        .slice(0, n)
+
+      log.push({ model, status: '✓', ms })
+      return { texts, model, log }
+    } catch (e) {
+      const ms = Math.round(performance.now() - t0)
+      log.push({ model, status: `сеть: ${e.message.slice(0,25)}`, ms })
+      continue
+    }
+  }
+  return { texts: [], model: null, log }
 }
 
 function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
@@ -37,58 +118,12 @@ function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
   )
 }
 
-async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec, dedupWindow) {
-  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow)
-  const n      = segments.length
-
-  for (const model of GEMINI_MODELS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-    try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { inline_data: { mime_type: 'audio/wav', data: b64wav } },
-            { text: prompt }
-          ]}],
-          generationConfig: { temperature: 0, maxOutputTokens: 1024 }
-        })
-      })
-      if (r.status === 429) { await sleep(3000); continue }
-      if (!r.ok) continue
-
-      const d   = await r.json()
-      const raw = (d.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
-      if (!raw) continue
-
-      let parsed
-      try {
-        let s = raw
-        if (s.includes('```')) { s = s.split('```')[1]||''; if (s.startsWith('json')) s = s.slice(4) }
-        parsed = JSON.parse(s.trim())
-      } catch (_) {
-        const m = raw.match(/\[[\s\S]*\]/)
-        if (m) try { parsed = JSON.parse(m[0]) } catch (_) { continue }
-        else continue
-      }
-      if (!Array.isArray(parsed)) continue
-
-      const texts = parsed
-        .map(x => (typeof x === 'string' ? x : (x?.text || '')).trim())
-        .map(t => PROMPT_LEAK.test(t) ? '' : t)
-        .slice(0, n)
-
-      return { texts, model }
-    } catch (_) { continue }
-  }
-  return { texts: [], model: '?' }
-}
 
 export async function dispatchChunks({
   audioBuf, chunks, apiKey, lang, chunkSec, dedupWindow = 12,
   onLog, onProgress, stopFlagRef,
-  concurrency = 8
+  concurrency = 8,
+  gmModel = 'gemini-2.0-flash'   // v12.5.1: выбранная пользователем модель
 }) {
   const langName   = LANG_MAP[lang] || lang
   const allText    = new Map()
@@ -101,7 +136,8 @@ export async function dispatchChunks({
   // Счётчики для суммарной статистики
   const chunkTimes = []  // массив времён каждого чанка в мс
 
-  onLog(`  ⏱ Dispatcher: ${chunks.length} чанков × ${concurrency} параллельно`, 'dm')
+  const chain = buildModelChain(gmModel)
+  onLog(`  ⏱ Dispatcher: ${chunks.length} чанков × ${concurrency} параллельно | основная: ${gmModel}`, 'dm')
 
   await new Promise(resolve => {
     let active = 0, nextCi = 0
@@ -133,35 +169,34 @@ export async function dispatchChunks({
             const b64    = await blobToBase64(wav)
             const prepMs = Math.round(performance.now() - prepT0)
 
-            let texts = [], usedModel = '?', attempts = 0
+            let texts = [], usedModel = '?', attemptLog = []
 
             const apiT0 = performance.now()
-            for (let att = 1; att <= 3; att++) {
-              attempts = att
-              const res = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
-              texts = res.texts; usedModel = res.model
-              if (texts.length === n) break
-              if (att < 3) {
-                if (att === 2) {
-                  const fallbackSegs = [{ localStart: 0, localEnd: dur }]
-                  const res2 = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow)
-                  if (res2.texts.length > 0) {
-                    usedModel = res2.model
-                    const fullText = res2.texts[0]
-                    segs.forEach((seg, i) => {
-                      allText.set(seg.flagId, i === 0 ? fullText : '')
-                      if (i === 0) fallbackEnds.set(seg.flagId, chunk.t1)
-                    })
-                    const totalMs = Math.round(performance.now() - chunkT0)
-                    const apiMs   = Math.round(performance.now() - apiT0)
-                    chunkTimes.push(totalMs)
-                    done++
-                    onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
-                    onLog(`    ✓ [${ci+1}] fallback→1сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)} | ${usedModel}`, 'wa')
-                    return
-                  }
-                }
-                await sleep(1500)
+            // Попытка 1: с правильными сегментами
+            const res = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow, gmModel)
+            texts = res.texts; usedModel = res.model; attemptLog = res.log
+
+            // Попытка 2 (fallback): один общий сегмент
+            if (texts.length !== n) {
+              const fallbackSegs = [{ localStart: 0, localEnd: dur }]
+              const res2 = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow, gmModel)
+              attemptLog.push(...res2.log)
+              if (res2.texts.length > 0) {
+                usedModel = res2.model
+                const fullText = res2.texts[0]
+                segs.forEach((seg, i) => {
+                  allText.set(seg.flagId, i === 0 ? fullText : '')
+                  if (i === 0) fallbackEnds.set(seg.flagId, chunk.t1)
+                })
+                const totalMs = Math.round(performance.now() - chunkT0)
+                const apiMs   = Math.round(performance.now() - apiT0)
+                chunkTimes.push(totalMs)
+                done++
+                onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
+                // Лог попыток
+                const tryStr = attemptLog.map(l => `${l.model.replace('gemini-','').replace('-latest','')}→${l.status}`).join(' | ')
+                onLog(`    ✓ [${ci+1}] fallback→1сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)} | ${tryStr}`, 'wa')
+                return
               }
             }
             const apiMs   = Math.round(performance.now() - apiT0)
@@ -173,8 +208,9 @@ export async function dispatchChunks({
             onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
 
             const ok = texts.filter(Boolean).length
-            const attStr = attempts > 1 ? ` ×${attempts}попыток` : ''
-            onLog(`    ✓ [${ci+1}] ${ok}/${n}сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)}${attStr} | ${usedModel}`, 'dm')
+            // Детальный лог: каждая модель и её статус
+            const tryStr = attemptLog.map(l => `${l.model.replace('gemini-','').replace('-latest','')}→${l.status}`).join(' | ')
+            onLog(`    ✓ [${ci+1}] ${ok}/${n}сег | prep:${fmt(prepMs)} api:${fmt(apiMs)} итого:${fmt(totalMs)} | ${tryStr}`, 'dm')
           })
           .then(() => {
             active--

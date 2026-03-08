@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { OR_MODELS }       from '../lib/openrouter.js'
+import { GM_MODELS }       from '../lib/gemini.js'
 import { initVoskModel }   from '../lib/vosk.js'
 
 const TM_DESC = {
@@ -21,6 +22,7 @@ export default function SettingsCard({
   subTiming, setSubTiming,
   timingMode, setTimingMode,
   orModel, setOrModel,
+  gmModel, setGmModel,
   voskReady, setVoskReady,
   voskModelRef,
   concurrency, setConcurrency   // v12.5
@@ -100,6 +102,23 @@ export default function SettingsCard({
           <label>Модель OpenRouter</label>
           <select value={orModel} onChange={e => setOrModel(e.target.value)}>
             {OR_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      {(prov === 'gm') && (
+        <div style={{ marginTop:12 }}>
+          <label>Модель Gemini
+            <span style={{fontSize:'0.75em', color:'var(--dm)', marginLeft:8}}>
+              {GM_MODELS.find(m => m.id === gmModel)?.priceHr}/ч · {GM_MODELS.find(m => m.id === gmModel)?.note}
+            </span>
+          </label>
+          <select value={gmModel} onChange={e => setGmModel(e.target.value)}>
+            {GM_MODELS.map(m => (
+              <option key={m.id} value={m.id}>
+                {m.label}  —  {m.priceHr}/ч  ·  Free {m.freeRpm} RPM
+              </option>
+            ))}
           </select>
         </div>
       )}

@@ -40,7 +40,7 @@ export function useBatchRunner() {
   const startBatch = useCallback(async ({
     files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
     dedupWindow = 12, subTiming = 'vad',
-    elKey, gmKey, orKey, orModel,
+    elKey, gmKey, orKey, orModel, gmModel = 'gemini-2.0-flash',
     voskReady, voskModelRef,
     concurrency = 8
   }) => {
@@ -124,7 +124,8 @@ export function useBatchRunner() {
                   setProgressText(txt)
                 },
                 stopFlagRef,
-                concurrency
+                concurrency,
+                gmModel
               })
               const p2Ms = Math.round(performance.now() - p2T0)
               addLog(`  Phase 2 ✓ | ⏱ ${fmt(p2Ms)}`, 'ok')
