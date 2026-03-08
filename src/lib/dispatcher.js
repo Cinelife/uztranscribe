@@ -222,7 +222,8 @@ export async function dispatchChunks({
             if (nextCi < chunks.length && !stopFlagRef?.current) launch()
             else if (active === 0) resolve()
           })
-          .catch(() => {
+          .catch((err) => {
+            onLog(`    ✗ [${ci+1}] ОШИБКА: ${err?.message || err}`, 'er')
             active--
             done++
             if (nextCi < chunks.length && !stopFlagRef?.current) launch()
