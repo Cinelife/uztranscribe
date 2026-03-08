@@ -26,7 +26,7 @@ function buildModelChain(primaryId) {
 }
 
 async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec, dedupWindow, primaryId) {
-  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow)
+  const prompt = buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang)
   const n      = segments.length
   const chain  = buildModelChain(primaryId)
   const log    = []   // [{model, status, ms}]
@@ -98,7 +98,7 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
   return { texts: [], model: null, log }
 }
 
-function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
+function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang) {
   const n    = segments.length
   const list = segments.map((s, i) =>
     `  ${i+1}. ${s.localStart.toFixed(2)}s – ${s.localEnd.toFixed(2)}s`
@@ -110,10 +110,12 @@ function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow) {
     `${list}\n\n` +
     `Transcription rules:\n` +
     `- Use full linguistic intelligence: interpret abbreviations, names, terminology correctly.\n` +
+    `- Proper nouns: apply correct ${langName} spelling.\n` +
     (dedupWindow === 0
       ? `- If audio repeats a phrase or chorus — transcribe it again. Repetition is real content, not an error.\n`
       : `- Do NOT repeat text from previous segments — transcribe only what you hear in THIS clip.\n`) +
-    `- Use "" for: completely silent segments, background music, intro/outro music, sound effects, or any segment with NO clear human speech.\\n\\n` +
+    `- Use "" ONLY for segments with NO human voice at all (pure silence, pure instrumental music with zero vocals).\n` +
+    `- If a segment has speech, rap, singing, or any human voice — ALWAYS transcribe the words, even if there is background music.\n` +
     `Output format — non-negotiable:\n` +
     `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
     `- No skipping, no merging, no extra commentary — only the array.\n\n` +
