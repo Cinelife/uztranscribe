@@ -1,8 +1,10 @@
 /**
- * v12 Dispatcher — timestamp-based prompt
+ * v12.5 Dispatcher — timestamp-based prompt
  * Gemini receives: audio chunk + exact time ranges per segment
  * Returns: array of strings, one per segment
  * No hallucination: Gemini listens to specific time window, not guessing
+ *
+ * v12.5: CONCURRENCY теперь параметр (дефолт 8, было 3)
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
@@ -49,7 +51,7 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
             { inline_data: { mime_type: 'audio/wav', data: b64wav } },
             { text: prompt }
           ]}],
-          generationConfig: { temperature: 0, maxOutputTokens: 2048 }
+          generationConfig: { temperature: 0, maxOutputTokens: 1024 }  // v12.5: 2048→1024
         })
       })
       if (r.status === 429) { await sleep(3000); continue }
@@ -86,78 +88,80 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
 export async function dispatchChunks({
   audioBuf, chunks, apiKey, lang, chunkSec, dedupWindow = 12,
   onLog, onProgress, stopFlagRef,
-  CONCURRENCY = 3
+  concurrency = 8   // v12.5: дефолт 8, было 3. Tier1 = 1000 RPM → 8 параллельно ≈ безопасно
 }) {
   const langName = LANG_MAP[lang] || lang
   const allText    = new Map()  // flagId → text
   const fallbackEnds = new Map()  // flagId → overridden end time
   let done = 0
 
+  // Stagger delay: при высоком concurrency уменьшаем задержку между запросами
+  const staggerMs = Math.max(100, Math.floor(300 / concurrency * 3))
+
   await new Promise(resolve => {
     let active = 0, nextCi = 0
 
     function launch() {
-      while (active < CONCURRENCY && nextCi < chunks.length) {
+      while (active < concurrency && nextCi < chunks.length) {
         if (stopFlagRef?.current) break
         const ci    = nextCi++
         const chunk = chunks[ci]
-        const label = `chunk ${ci+1}/${chunks.length}`
         const segs  = chunk.segments  // [{flagId, start, end}]
         const n     = segs.length
         const t0    = chunk.t0
         const dur   = chunk.t1 - t0
         active++
 
-        // Build local (relative) time ranges for prompt
         const localSegs = segs.map(s => ({
           localStart: parseFloat((s.start - t0).toFixed(2)),
           localEnd:   parseFloat((s.end   - t0).toFixed(2))
         }))
 
-        sleep(ci % CONCURRENCY * 300)
+        sleep(ci % concurrency * staggerMs)
           .then(async () => {
-            onLog(`    → ${label} [${t0.toFixed(1)}–${chunk.t1.toFixed(1)}с, ${n} сег]`, 'dm')
-            const b64  = await blobToBase64(sliceToWav(audioBuf, t0, chunk.t1))
-            let texts  = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
+            onLog(`    ⟳ чанк ${ci+1}/${chunks.length} [${t0.toFixed(1)}–${chunk.t1.toFixed(1)}s]`, 'dm')
+            const wav  = sliceToWav(audioBuf, t0, chunk.t1)
+            const b64  = await blobToBase64(wav)
 
-            // Retry loop: up to 3 attempts with increasing delay
-            const MAX_RETRIES = 3
-            let attempt = 1
-            while ((texts.length === 0 || texts.length !== n) && attempt <= MAX_RETRIES) {
-              const delay = attempt * 800
-              onLog(`    ↻ ${label}: вернулось ${texts.length}/${n} → повтор ${attempt}/${MAX_RETRIES} (${delay}мс)`, 'wa')
-              await sleep(delay)
-              const retried = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
-              if (retried.length === n) { texts = retried; break }
-              if (retried.length > texts.length) texts = retried
-              attempt++
-            }
-
-            // Fallback: if still 0 results — send whole chunk without segments, get single text block
-            if (texts.length === 0) {
-              onLog(`    ⚠ ${label}: fallback → транскрипция без сегментов`, 'wa')
-              await sleep(1000)
-              const fallbackTexts = await callGemini(apiKey, b64, [{localStart:0, localEnd:dur}], langName, dur, chunkSec, dedupWindow)
-              if (fallbackTexts.length > 0 && fallbackTexts[0]) {
-                allText.set(segs[0].flagId, fallbackTexts[0])
-                fallbackEnds.set(segs[0].flagId, chunk.t1)
-                onLog(`    ✓ ${label}: fallback → 1 сег (весь чанк ${t0.toFixed(1)}–${chunk.t1.toFixed(1)}с)`, 'wa')
+            let texts = []
+            for (let att = 1; att <= 3; att++) {
+              texts = await callGemini(apiKey, b64, localSegs, langName, dur, chunkSec, dedupWindow)
+              if (texts.length === n) break
+              if (att < 3) {
+                // Fallback: весь чанк как один сегмент
+                if (att === 2) {
+                  const fallbackSegs = [{ localStart: 0, localEnd: dur }]
+                  texts = await callGemini(apiKey, b64, fallbackSegs, langName, dur, chunkSec, dedupWindow)
+                  if (texts.length > 0) {
+                    // Назначаем весь текст первому сегменту, остальные пустые
+                    const fullText = texts[0]
+                    segs.forEach((seg, i) => {
+                      allText.set(seg.flagId, i === 0 ? fullText : '')
+                      if (i === 0) fallbackEnds.set(seg.flagId, chunk.t1)
+                    })
+                    done++
+                    onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
+                    return
+                  }
+                }
+                await sleep(1500)
               }
-            } else {
-              // Zip texts → flagIds
-              segs.forEach((seg, i) => {
-                allText.set(seg.flagId, texts[i] || '')
-              })
             }
 
+            // Zip texts → flagIds
+            segs.forEach((seg, i) => allText.set(seg.flagId, texts[i] || ''))
             done++
-            const filled = segs.filter(s => allText.get(s.flagId)).length
-            onLog(`    ✓ ${label} → ${filled}/${n} сег`, 'dm')
-            onProgress && onProgress(done / chunks.length * 100, `Gemini: ${done}/${chunks.length}`)
+            onProgress(`⏳ Gemini: ${done}/${chunks.length}`)
+            onLog(`    ✓ чанк ${ci+1} → ${texts.filter(Boolean).length}/${n} сег.`, 'dm')
           })
-          .catch(e => { onLog(`    ✗ ${label}: ${e.message}`, 'wa'); done++ })
-          .finally(() => {
+          .then(() => {
             active--
+            if (nextCi < chunks.length && !stopFlagRef?.current) launch()
+            else if (active === 0) resolve()
+          })
+          .catch(() => {
+            active--
+            done++
             if (nextCi < chunks.length && !stopFlagRef?.current) launch()
             else if (active === 0) resolve()
           })
