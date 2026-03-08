@@ -114,8 +114,7 @@ function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang) 
     (dedupWindow === 0
       ? `- If audio repeats a phrase or chorus — transcribe it again. Repetition is real content, not an error.\n`
       : `- Do NOT repeat text from previous segments — transcribe only what you hear in THIS clip.\n`) +
-    `- Use "" ONLY for segments with NO human voice at all (pure silence, pure instrumental music with zero vocals).\n` +
-    `- If a segment has speech, rap, singing, or any human voice — ALWAYS transcribe the words, even if there is background music.\n` +
+    `- Use "" only for completely silent or inaudible segments.\n\n` +
     `Output format — non-negotiable:\n` +
     `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
     `- No skipping, no merging, no extra commentary — only the array.\n\n` +

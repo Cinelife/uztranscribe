@@ -1,46 +1,48 @@
 import { sliceToWav, blobToBase64, buildSmartChunks, sleep, decodeAudio } from './audioUtils.js'
 import { deduplicateSegs, splitLongLines } from './srtUtils.js'
 
-// v12.5.1: модели от нового к старому. id = строка для API.
+// v12.5.2: модели от нового к старому. id = строка для API.
 // priceHr = примерная стоимость 1 часа аудио (90K аудио-токенов + 40K текст)
 // freeRpm = лимит на Free tier, tier1Rpm = Tier 1
 // fallback = цепочка резервных моделей при 429/ошибке
+// ВАЖНО: 2.0-flash модели ставим ПОСЛЕ 2.5-lite в fallback —
+//   они быстро исчерпываются при тестировании (малый RPD на Free tier)
 export const GM_MODELS = [
-  {
-    id:        'gemini-2.5-flash-lite',
-    label:     'Gemini 2.5 Flash Lite',
-    priceHr:   '$0.031',
-    note:      'Новейший · самый дешёвый · быстрый',
-    freeRpm:   10,
-    tier1Rpm:  2000,
-    fallback:  ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
-  },
   {
     id:        'gemini-2.5-flash',
     label:     'Gemini 2.5 Flash',
     priceHr:   '$0.119',
-    note:      'Лучшее качество · мыслит',
+    note:      'Лучшее качество · рекомендуется',
     freeRpm:   10,
     tier1Rpm:  1000,
-    fallback:  ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+    fallback:  ['gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
+  },
+  {
+    id:        'gemini-2.5-flash-lite',
+    label:     'Gemini 2.5 Flash Lite',
+    priceHr:   '$0.031',
+    note:      'Дешёвый · быстрый · надёжный',
+    freeRpm:   10,
+    tier1Rpm:  4000,
+    fallback:  ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
   },
   {
     id:        'gemini-2.0-flash',
     label:     'Gemini 2.0 Flash',
     priceHr:   '$0.071',
-    note:      'Стабильный · быстрый · рекомендуется',
+    note:      'Стабильный · может исчерпать квоту',
     freeRpm:   15,
     tier1Rpm:  2000,
-    fallback:  ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+    fallback:  ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-latest']
   },
   {
     id:        'gemini-2.0-flash-lite',
     label:     'Gemini 2.0 Flash Lite',
     priceHr:   '$0.040',
-    note:      'Эконом · очень быстрый',
+    note:      'Эконом · может исчерпать квоту',
     freeRpm:   30,
     tier1Rpm:  4000,
-    fallback:  ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash-latest']
+    fallback:  ['gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']
   },
   {
     id:        'gemini-1.5-flash-latest',
@@ -49,7 +51,7 @@ export const GM_MODELS = [
     note:      'Устарел · самый дешёвый',
     freeRpm:   15,
     tier1Rpm:  2000,
-    fallback:  ['gemini-2.0-flash-lite', 'gemini-2.0-flash']
+    fallback:  ['gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-2.0-flash']
   },
 ]
 
