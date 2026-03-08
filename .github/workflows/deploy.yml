@@ -20,6 +20,25 @@ jobs:
         with:
           node-version: 20
 
+      - name: Check for API key leaks
+        run: |
+          echo "🔍 Проверка на утечку API ключей..."
+          LEAKED=0
+          if grep -rE 'sk_[a-zA-Z0-9]{30,}' src/ 2>/dev/null | grep -v "placeholder\|example\|your"; then
+            echo "❌ Найден ElevenLabs ключ в src/"; LEAKED=1
+          fi
+          if grep -rE 'AIza[a-zA-Z0-9_-]{35}' src/ 2>/dev/null; then
+            echo "❌ Найден Google/Gemini ключ в src/"; LEAKED=1
+          fi
+          if grep -rE 'sk-or-v1-[a-zA-Z0-9]{60,}' src/ 2>/dev/null; then
+            echo "❌ Найден OpenRouter ключ в src/"; LEAKED=1
+          fi
+          if [ $LEAKED -eq 1 ]; then
+            echo "🚨 ДЕПЛОЙ ОСТАНОВЛЕН: убери API ключи из исходников!"
+            exit 1
+          fi
+          echo "✅ API ключи не найдены"
+
       - name: Install & Build
         run: |
           npm install
@@ -36,43 +55,37 @@ jobs:
         run: |
           CURRENT_VER=$(node -e "console.log(require('./package.json').version)")
           CURRENT_DATE=$(date +"%Y-%m-%d")
-          echo "Building version: $CURRENT_VER"
+          echo "📦 Новая версия: $CURRENT_VER"
 
-          mkdir -p dist/versions
+          mkdir -p docs/versions
 
-          # Copy existing archived versions if they exist
           if [ -d gh-pages-existing/versions ]; then
-            rsync -a --exclude='manifest.json' gh-pages-existing/versions/ dist/versions/ || true
+            rsync -a --exclude='manifest.json' gh-pages-existing/versions/ docs/versions/ || true
           fi
 
-          # Read previous manifest to get old current version
           PREV_VER=""
-          PREV_LABEL=""
           PREV_DATE=""
           if [ -f gh-pages-existing/versions/manifest.json ]; then
             PREV_VER=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.current||'')}catch(e){console.log('')}")
-            PREV_LABEL=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.currentLabel||m.current||'')}catch(e){console.log('')}")
             PREV_DATE=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.currentDate||'')}catch(e){console.log('')}")
+            echo "📌 Предыдущая версия: $PREV_VER ($PREV_DATE)"
           fi
 
-          # Archive previous version's built files if version changed
           if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$CURRENT_VER" ]; then
-            echo "Archiving previous version: $PREV_VER"
-            mkdir -p "dist/versions/$PREV_VER"
+            echo "📦 Архивируем v$PREV_VER"
+            mkdir -p "docs/versions/$PREV_VER"
             if [ -d gh-pages-existing ]; then
-              # Copy all static files except versions/ dir
-              rsync -a --exclude='versions' gh-pages-existing/ "dist/versions/$PREV_VER/" || true
+              rsync -a --exclude='versions' --exclude='.nojekyll' \
+                gh-pages-existing/ "docs/versions/$PREV_VER/" || true
             fi
           fi
 
-          # Generate manifest.json
           node -e "
             const fs = require('fs');
-            const MAX_ARCHIVED = 2;
+            const MAX_ARCHIVED = 10;
             let archived = [];
 
-            // Read existing archived from dist/versions
-            const versionsDir = 'dist/versions';
+            const versionsDir = 'docs/versions';
             if (fs.existsSync(versionsDir)) {
               const entries = fs.readdirSync(versionsDir, { withFileTypes: true });
               for (const e of entries) {
@@ -82,27 +95,23 @@ jobs:
               }
             }
 
-            // Merge with previous manifest's version dates
-            const prevManifestPath = 'gh-pages-existing/versions/manifest.json';
-            if (fs.existsSync(prevManifestPath)) {
-              const prev = JSON.parse(fs.readFileSync(prevManifestPath, 'utf8'));
+            const prevPath = 'gh-pages-existing/versions/manifest.json';
+            if (fs.existsSync(prevPath)) {
+              const prev = JSON.parse(fs.readFileSync(prevPath, 'utf8'));
               for (const a of archived) {
                 const found = (prev.versions || []).find(v => v.id === a.id);
                 if (found) { a.label = found.label; a.date = found.date; }
-                // Previous current archived now
                 if (a.id === prev.current && prev.currentDate) a.date = prev.currentDate;
               }
             }
 
-            // Trim to MAX_ARCHIVED (keep newest)
-            archived.sort((a,b) => b.id.localeCompare(a.id));
+            archived.sort((a, b) => b.id.localeCompare(a.id));
             const toRemove = archived.slice(MAX_ARCHIVED);
             archived = archived.slice(0, MAX_ARCHIVED);
-
-            // Remove old version directories
             for (const r of toRemove) {
-              const p = 'dist/versions/' + r.id;
+              const p = 'docs/versions/' + r.id;
               if (fs.existsSync(p)) fs.rmSync(p, { recursive: true });
+              console.log('🗑 Удалена старая версия:', r.id);
             }
 
             const manifest = {
@@ -111,9 +120,8 @@ jobs:
               currentDate: '$CURRENT_DATE',
               versions: archived
             };
-            fs.mkdirSync('dist/versions', { recursive: true });
-            fs.writeFileSync('dist/versions/manifest.json', JSON.stringify(manifest, null, 2));
-            console.log('Manifest:', JSON.stringify(manifest, null, 2));
+            fs.writeFileSync('docs/versions/manifest.json', JSON.stringify(manifest, null, 2));
+            console.log('📋 manifest:', JSON.stringify(manifest, null, 2));
           "
 
       - name: Deploy to gh-pages
@@ -123,5 +131,9 @@ jobs:
           publish_dir: ./docs
           destination_dir: .
           keep_files: false
-          exclude_assets: ''
-          extra_files: dist/versions
+
+      - name: Summary
+        run: |
+          CURRENT_VER=$(node -e "console.log(require('./package.json').version)")
+          echo "## ✅ Задеплоено v$CURRENT_VER" >> $GITHUB_STEP_SUMMARY
+          echo "🌐 https://cinelife.github.io/uztranscribe" >> $GITHUB_STEP_SUMMARY
