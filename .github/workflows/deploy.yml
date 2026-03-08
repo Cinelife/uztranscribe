@@ -55,22 +55,28 @@ jobs:
         run: |
           CURRENT_VER=$(node -e "console.log(require('./package.json').version)")
           CURRENT_DATE=$(date +"%Y-%m-%d")
-          echo "📦 Новая версия: $CURRENT_VER"
+          REPO_NAME=$(basename $(git remote get-url origin) .git)
+          SITE_BASE="/${REPO_NAME}/"
+          echo "📦 Новая версия: $CURRENT_VER | base: $SITE_BASE"
 
           mkdir -p docs/versions
 
+          # Копируем уже существующие архивы
           if [ -d gh-pages-existing/versions ]; then
             rsync -a --exclude='manifest.json' gh-pages-existing/versions/ docs/versions/ || true
+            echo "✅ Скопированы существующие архивы"
           fi
 
+          # Читаем предыдущий manifest
           PREV_VER=""
           PREV_DATE=""
           if [ -f gh-pages-existing/versions/manifest.json ]; then
             PREV_VER=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.current||'')}catch(e){console.log('')}")
             PREV_DATE=$(node -e "try{const m=require('./gh-pages-existing/versions/manifest.json');console.log(m.currentDate||'')}catch(e){console.log('')}")
-            echo "📌 Предыдущая версия: $PREV_VER ($PREV_DATE)"
+            echo "📌 Предыдущая: $PREV_VER ($PREV_DATE)"
           fi
 
+          # Архивируем предыдущий билд если версия изменилась
           if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$CURRENT_VER" ]; then
             echo "📦 Архивируем v$PREV_VER"
             mkdir -p "docs/versions/$PREV_VER"
@@ -78,8 +84,21 @@ jobs:
               rsync -a --exclude='versions' --exclude='.nojekyll' \
                 gh-pages-existing/ "docs/versions/$PREV_VER/" || true
             fi
+
+            # ── ИСПРАВЛЕНИЕ 404: патчим index.html архивной версии ──────────
+            # Vite билд использует ./assets/... — из подпапки /versions/X.X.X/
+            # эти пути ломаются. Добавляем <base href> чтобы браузер искал
+            # assets от корня архивной папки, а не от текущего URL.
+            ARCHIVE_INDEX="docs/versions/$PREV_VER/index.html"
+            if [ -f "$ARCHIVE_INDEX" ]; then
+              BASE_HREF="${SITE_BASE}versions/${PREV_VER}/"
+              # Вставляем <base href="..."> сразу после <head>
+              sed -i "s|<head>|<head><base href=\"${BASE_HREF}\">|" "$ARCHIVE_INDEX"
+              echo "✅ Пропатчен index.html для v$PREV_VER: base href = $BASE_HREF"
+            fi
           fi
 
+          # Строим manifest.json
           node -e "
             const fs = require('fs');
             const MAX_ARCHIVED = 10;
