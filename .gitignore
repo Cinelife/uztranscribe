@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output (деплоится через GitHub Actions, не вручную)
+# docs/ НЕ игнорируем — нужен для gh-pages через actions
+
+# Environment / Secrets — НИКОГДА не коммить!
+.env
+.env.local
+.env.*.local
+*.env
+
+# API ключи случайно сохранённые в файлы
+*apikey*
+*api_key*
+*secret*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+
+# Temp
+*.tmp
+*.temp
