@@ -81,8 +81,20 @@ export function useBatchRunner() {
         if (stopFlagRef.current) break
         const provName = p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'
         const fileT0   = performance.now()
+
+        // Длительность файла — для всех провайдеров
+        let fileDurStr = ''
+        let audioBufCached = null
+        try {
+          audioBufCached = await decodeAudio(file)
+          const totalSec = audioBufCached.duration
+          const mm = Math.floor(totalSec / 60)
+          const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
+          fileDurStr = ` (${mm}:${ss})`
+        } catch (_) {}
+
         addLog(``, 'dm')
-        addLog(`▶ [${fi+1}/${files.length}] ${file.name}  (${provName})`, 'in')
+        addLog(`▶ [${fi+1}/${files.length}] ${file.name}${fileDurStr}  (${provName})`, 'in')
 
         try {
           let segs = []
@@ -113,7 +125,7 @@ export function useBatchRunner() {
               // ── Phase 2: Dispatch ─────────────────────────────────────────
               addLog(`  Phase 2 — Dispatcher (×${concurrency} параллельно)...`, 'gm-cl')
               const p2T0     = performance.now()
-              const audioBuf = await decodeAudio(file)
+              const audioBuf = audioBufCached || await decodeAudio(file)
 
               const { allText: textMap, fallbackEnds } = await dispatchChunks({
                 audioBuf, chunks,
