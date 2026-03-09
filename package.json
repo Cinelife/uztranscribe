@@ -1,7 +1,7 @@
 {
   "name": "uzbek-transcriber",
   "private": true,
-  "version": "12.5.0",
+  "version": "12.5.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
