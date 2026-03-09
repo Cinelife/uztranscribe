@@ -10,6 +10,31 @@ const TM_DESC = {
   vosk:   'v11: Vosk per-chunk → акустические якоря → Gemini пишет только текст (точные таймкоды)'
 }
 
+// Inline toggle helper — no extra CSS classes needed
+function Toggle({ on, onToggle, label, hint }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'4px' }}>
+      <button
+        onClick={onToggle}
+        style={{
+          width:'36px', height:'20px', borderRadius:'10px', border:'none', cursor:'pointer',
+          background: on ? 'var(--pu)' : 'var(--brd)',
+          position:'relative', flexShrink:0, transition:'background .2s'
+        }}
+      >
+        <span style={{
+          position:'absolute', top:'3px',
+          left: on ? '18px' : '3px',
+          width:'14px', height:'14px', borderRadius:'50%',
+          background:'#fff', transition:'left .2s'
+        }} />
+      </button>
+      <span style={{ fontSize:'0.8em', color: on ? 'var(--txt)' : 'var(--mu)' }}>{label}</span>
+      {hint && <span style={{ fontSize:'0.7em', color:'var(--dm)' }}>{hint}</span>}
+    </div>
+  )
+}
+
 export default function SettingsCard({
   prov, setProv,
   lang, setLang,
@@ -25,10 +50,15 @@ export default function SettingsCard({
   gmModel, setGmModel,
   voskReady, setVoskReady,
   voskModelRef,
-  concurrency, setConcurrency   // v12.5
+  concurrency, setConcurrency,
+  // v12.5.4 experimental
+  classifierMode,  setClassifierMode,
+  showMusicMarker, setShowMusicMarker,
+  useRmsTiming,    setUseRmsTiming,
+  useFFT,          setUseFFT,
 }) {
   const voskFileRef = useRef(null)
-  const [voskStatus, setVoskStatus] = useState(null) // null | 'loading' | 'ok' | 'error'
+  const [voskStatus, setVoskStatus] = useState(null)
   const [voskMsg,    setVoskMsg]    = useState('')
   const [voskLog,    setVoskLog]    = useState([])
 
@@ -36,28 +66,17 @@ export default function SettingsCard({
     const inp = voskFileRef.current
     if (!inp?.files?.length) { alert('Выбери .zip файл модели Vosk'); return }
     if (voskReady) return
-
     setVoskStatus('loading')
     setVoskMsg('⏳ Инициализация vosk-browser WASM...')
     setVoskLog(['Загрузка файла модели...'])
-
     try {
-      // progress simulation while loading
-      const logSteps = [
-        'Распаковка модели...',
-        'Загрузка WASM модуля...',
-        'Инициализация распознавателя...',
-      ]
+      const logSteps = ['Распаковка модели...', 'Загрузка WASM модуля...', 'Инициализация распознавателя...']
       let step = 0
       const interval = setInterval(() => {
-        if (step < logSteps.length) {
-          setVoskLog(prev => [...prev, logSteps[step++]])
-        }
+        if (step < logSteps.length) setVoskLog(prev => [...prev, logSteps[step++]])
       }, 800)
-
       const model = await initVoskModel(inp.files[0])
       clearInterval(interval)
-
       voskModelRef.current = model
       setVoskReady(true)
       setVoskStatus('ok')
@@ -71,10 +90,13 @@ export default function SettingsCard({
     }
   }
 
+  const isGmPath = prov === 'gm' || prov === 'or' || prov === 'bo'
+
   return (
     <div className="card">
       <div className="ct">Настройки транскрипции</div>
       <div className="r2">
+        {/* Провайдер */}
         <div>
           <label>Провайдер</label>
           <div className="ptabs">
@@ -85,48 +107,61 @@ export default function SettingsCard({
             ))}
           </div>
         </div>
+
+        {/* Язык */}
         <div>
-          <label>Язык</label>
-          <select value={lang} onChange={e => setLang(e.target.value)}>
-            <option value="uz">🇺🇿 Uzbek</option>
-            <option value="ru">🇷🇺 Russian</option>
-            <option value="en">🇬🇧 English</option>
-            <option value="kk">🇰🇿 Kazakh</option>
-            <option value="tg">🇹🇯 Tajik</option>
-          </select>
+          <label>Язык аудио</label>
+          <div className="ptabs">
+            {[['uz','🇺🇿 UZ'],['ru','🇷🇺 RU'],['en','🇬🇧 EN'],['kk','🇰🇿 KK'],['tg','🇹🇯 TG']].map(([v,l]) => (
+              <button key={v}
+                className={`btn pt${lang===v?' on':''}`}
+                onClick={() => setLang(v)}>{l}</button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {(prov === 'or' || prov === 'bo') && (
-        <div style={{ marginTop:12 }}>
-          <label>Модель OpenRouter</label>
-          <select value={orModel} onChange={e => setOrModel(e.target.value)}>
+      {/* Gemini model */}
+      {(prov === 'gm' || prov === 'bo') && (
+        <div style={{marginTop:'10px'}}>
+          <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
+            Модель Gemini:
+          </label>
+          <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
+            {GM_MODELS.map(m => (
+              <button key={m.id}
+                className={`btn tm${gmModel===m.id?' on':''}`}
+                onClick={() => setGmModel(m.id)}
+                style={{fontSize:'0.72em',padding:'3px 8px'}}>
+                {m.label || m.id.replace('gemini-','')}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* OpenRouter model */}
+      {prov === 'or' && (
+        <div style={{marginTop:'10px'}}>
+          <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
+            OpenRouter модель:
+          </label>
+          <select value={orModel} onChange={e => setOrModel(e.target.value)}
+            style={{width:'100%',padding:'6px',background:'var(--bg3)',color:'var(--txt)',border:'1px solid var(--brd)',borderRadius:'6px'}}>
             {OR_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </div>
       )}
 
-      {(prov === 'gm') && (
-        <div style={{ marginTop:12 }}>
-          <label>Модель Gemini
-            <span style={{fontSize:'0.75em', color:'var(--dm)', marginLeft:8}}>
-              {GM_MODELS.find(m => m.id === gmModel)?.priceHr}/ч · {GM_MODELS.find(m => m.id === gmModel)?.note}
+      {/* Sliders */}
+      <div style={{marginTop:'12px'}}>
+        <div>
+          <label>Размер чанка: <strong style={{color:'var(--pu)'}}>{chunkSec}с</strong>
+            <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>
+              → maxOut: {chunkSec >= 45 ? '4096' : chunkSec >= 25 ? '2048' : '1024'} токенов
             </span>
           </label>
-          <select value={gmModel} onChange={e => setGmModel(e.target.value)}>
-            {GM_MODELS.map(m => (
-              <option key={m.id} value={m.id}>
-                {m.label}  —  {m.priceHr}/ч  ·  Free {m.freeRpm} RPM
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      <div className="r2" style={{ marginTop:12 }}>
-        <div>
-          <label>Размер чанка: <strong style={{color:'var(--txt)'}}>{chunkSec}с</strong></label>
-          <input type="range" min="15" max="60" step="5" value={chunkSec}
+          <input type="range" min="10" max="60" step="5" value={chunkSec}
             onChange={e => setChunkSec(Number(e.target.value))} />
         </div>
         <div>
@@ -145,8 +180,9 @@ export default function SettingsCard({
           <input type="range" min="0" max="20" step="1" value={dedupWindow}
             onChange={e => setDedupWindow(Number(e.target.value))} />
         </div>
-        {/* v12.5 Concurrency slider */}
-        {(prov === 'gm' || prov === 'or' || prov === 'bo') && (
+
+        {/* Concurrency */}
+        {isGmPath && (
           <div>
             <label>Параллельность (Concurrency): <strong style={{color:'var(--pu)'}}>{concurrency}</strong>
               <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ быстрее (Tier 1 = 8+)</span>
@@ -155,6 +191,90 @@ export default function SettingsCard({
               onChange={e => setConcurrency(Number(e.target.value))} />
           </div>
         )}
+
+        {/* ── v12.5.4 Экспериментальные настройки ──────────────────────────── */}
+        {isGmPath && (
+          <div style={{
+            marginTop:'14px',
+            padding:'12px 14px',
+            background:'var(--bg3)',
+            border:'1px solid var(--brd)',
+            borderRadius:'8px',
+          }}>
+            <div style={{
+              fontSize:'0.7em', letterSpacing:'.1em', color:'var(--mu)',
+              textTransform:'uppercase', marginBottom:'10px',
+              display:'flex', alignItems:'center', gap:'6px'
+            }}>
+              <span>⚗</span> Экспериментальные (бэта)
+            </div>
+
+            {/* Классификатор аудио */}
+            <div style={{marginBottom:'10px'}}>
+              <div style={{fontSize:'0.75em',color:'var(--dm)',marginBottom:'6px'}}>
+                Классификатор аудио (ZCR+RMS):
+              </div>
+              <div style={{display:'flex',gap:'6px'}}>
+                {[
+                  ['off',  '✗ выкл',  'классификатор отключён'],
+                  ['hint', '💬 hint', 'добавит подсказку в промпт'],
+                  ['full', '🎯 full', 'изменит промпт для музыкальных сегментов'],
+                ].map(([v, label, title]) => (
+                  <button key={v} title={title}
+                    className={`btn tm${classifierMode===v?' on':''}`}
+                    onClick={() => setClassifierMode(v)}
+                    style={{fontSize:'0.72em',padding:'3px 10px'}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Показывать ♪ */}
+            <Toggle
+              on={showMusicMarker}
+              onToggle={() => setShowMusicMarker(v => !v)}
+              label="Показывать ♪ в субтитрах"
+              hint={showMusicMarker ? 'музыкальные блоки попадут в SRT' : 'музыкальные блоки пропускаются'}
+            />
+
+            {/* RMS sub-timing */}
+            <div style={{marginTop:'8px'}}>
+              <Toggle
+                on={useRmsTiming}
+                onToggle={() => setUseRmsTiming(v => !v)}
+                label="RMS sub-timing"
+                hint="точнее делит длинные сегменты по энергии"
+              />
+            </div>
+
+            {/* FFT (только если RMS включён) */}
+            {useRmsTiming && (
+              <div style={{marginLeft:'12px', marginTop:'4px'}}>
+                <div style={{fontSize:'0.72em',color:'var(--dm)',marginBottom:'4px'}}>
+                  Метод sub-timing:
+                </div>
+                <div style={{display:'flex',gap:'6px'}}>
+                  {[
+                    ['rms', '📊 RMS', 'деление по энергии сигнала'],
+                    ['fft', '🌊 ZCR', 'деление по речевой плотности (ZCR)'],
+                  ].map(([v, label, title]) => {
+                    const isOn = v === 'fft' ? useFFT : !useFFT
+                    return (
+                      <button key={v} title={title}
+                        className={`btn tm${isOn?' on':''}`}
+                        onClick={() => setUseFFT(v === 'fft')}
+                        style={{fontSize:'0.72em',padding:'3px 10px'}}>
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* v12 advanced sliders */}
         {timingMode === 'v12' && (
           <div className="sliders-row" style={{marginTop:'8px',opacity:0.9}}>
@@ -185,8 +305,7 @@ export default function SettingsCard({
                 ['balanced', '⚖ Балансный',  'равномерная длина строк'],
                 ['sentence', '📝 По фразам', 'рвать только после . ! ?'],
               ].map(([v, label, hint]) => (
-                <button key={v}
-                  title={hint}
+                <button key={v} title={hint}
                   className={`btn tm${mergeMode===v?' on':''}`}
                   onClick={() => setMergeMode(v)}
                   style={{fontSize:'0.75em',padding:'4px 10px'}}>
@@ -198,6 +317,7 @@ export default function SettingsCard({
         )}
       </div>
 
+      {/* Метод тайм-кодов */}
       {prov !== 'el' && (
         <div style={{ marginTop:12 }}>
           <label>Метод тайм-кодов</label>
@@ -209,6 +329,7 @@ export default function SettingsCard({
             ))}
           </div>
           <div className="tm-desc">{TM_DESC[timingMode]}</div>
+
           {timingMode === 'silero' && (
             <div style={{marginTop:'10px'}}>
               <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
@@ -219,8 +340,7 @@ export default function SettingsCard({
                   ['vad',   '📍 VAD',       'использовать границы Silero VAD как есть'],
                   ['words', '📏 По словам', 'делить время пропорционально словам'],
                 ].map(([v, label, hint]) => (
-                  <button key={v}
-                    title={hint}
+                  <button key={v} title={hint}
                     className={`btn tm${subTiming===v?' on':''}`}
                     onClick={() => setSubTiming(v)}
                     style={{fontSize:'0.75em',padding:'4px 10px'}}>
@@ -233,7 +353,7 @@ export default function SettingsCard({
         </div>
       )}
 
-      {/* Vosk loader — only when vosk mode selected */}
+      {/* Vosk loader */}
       {timingMode === 'vosk' && prov !== 'el' && (
         <div style={{ marginTop:12, padding:'14px', background:'var(--bg3)', borderRadius:'8px', border:'1px solid var(--brd)' }}>
           <label style={{ marginBottom:8 }}>
@@ -243,29 +363,20 @@ export default function SettingsCard({
             <span style={{ color:'var(--mu)', marginLeft:6 }}>(vosk-model-small-uz рекомендован)</span>
           </label>
           <div className="kr">
-            <input type="file" ref={voskFileRef} accept=".zip" disabled={voskReady}
-              style={{ flex:1 }} />
-            <button className={`btn bc`} onClick={handleLoadVosk} disabled={voskReady || voskStatus==='loading'}
+            <input type="file" ref={voskFileRef} accept=".zip" disabled={voskReady} style={{ flex:1 }} />
+            <button className="btn bc" onClick={handleLoadVosk} disabled={voskReady || voskStatus==='loading'}
               style={voskReady ? {color:'var(--ok)',borderColor:'var(--ok)'} : {}}>
               {voskReady ? '✓ Загружено' : voskStatus==='loading' ? '⏳...' : 'Загрузить'}
             </button>
           </div>
-
-          {/* Status block */}
-          {voskStatus && (
-            <div className={`vstt vs-${voskStatus==='loading'?'lo':voskStatus==='ok'?'ok':'er'}`}>
+          {voskMsg && (
+            <div className={`vs-badge vs-${voskStatus || 'ok'}`} style={{marginTop:'8px',padding:'6px 10px',borderRadius:'6px',fontSize:'0.78em'}}>
               {voskMsg}
             </div>
           )}
-
-          {/* Init log */}
           {voskLog.length > 0 && (
             <div className="vosk-init-log">
-              {voskLog.map((line, i) => (
-                <div key={i} style={{ color: line.startsWith('✅') ? 'var(--ok)' : line.startsWith('❌') ? 'var(--er)' : 'var(--mu)' }}>
-                  {line}
-                </div>
-              ))}
+              {voskLog.map((l, i) => <div key={i}>{l}</div>)}
             </div>
           )}
         </div>
