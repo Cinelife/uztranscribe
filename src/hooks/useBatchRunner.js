@@ -9,10 +9,18 @@ import { segmentAudio }         from '../lib/segmenter.js'
 import { segmentAudioSilero }   from '../lib/sileroVad.js'
 import { dispatchChunks }       from '../lib/dispatcher.js'
 import { assemble }             from '../lib/assembler.js'
+import { classifySegments }     from '../lib/audioClassifier.js'
 
 function fmt(ms) {
   if (ms < 1000) return `${ms}мс`
   return `${(ms/1000).toFixed(1)}с`
+}
+
+// v12.5.4: maxOutputTokens label for log
+function maxOutLabel(chunkSec) {
+  if (chunkSec >= 45) return '4096'
+  if (chunkSec >= 25) return '2048'
+  return '1024'
 }
 
 export function useBatchRunner() {
@@ -39,10 +47,17 @@ export function useBatchRunner() {
 
   const startBatch = useCallback(async ({
     files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
-    dedupWindow = 12, subTiming = 'vad',
-    elKey, gmKey, orKey, orModel, gmModel = 'gemini-2.0-flash',
+    dedupWindow    = 12,
+    subTiming      = 'vad',
+    elKey, gmKey, orKey, orModel,
+    gmModel        = 'gemini-2.0-flash',
     voskReady, voskModelRef,
-    concurrency = 8
+    concurrency    = 8,
+    // v12.5.4 experimental
+    classifierMode  = 'off',   // 'off'|'hint'|'full'
+    showMusicMarker = false,
+    useRmsTiming    = false,
+    useFFT          = false,
   }) => {
     if (!files.length) { alert('Добавь файлы'); return }
     if (prov === 'el' && !elKey) { alert('Нет ElevenLabs API Key'); return }
@@ -55,191 +70,196 @@ export function useBatchRunner() {
     setProgress(0)
     setVoskVisible(false)
 
-    const totalJobs   = files.length * (prov === 'bo' ? 2 : 1)
+    const totalJobs = files.length * (prov === 'bo' ? 2 : 1)
     let done = 0
-    const newSrtMap   = {}
 
-    const isV12    = (prov === 'gm' || prov === 'bo') && timingMode === 'v12'
-    const isSilero = (prov === 'gm' || prov === 'bo') && timingMode === 'silero'
-
-    const batchT0 = performance.now()
-
-    addLog('══════════════════════════════════════════════', 'dm')
-    addLog(`Файлов: ${files.length} | Провайдер: ${prov.toUpperCase()} | Язык: ${lang}`, 'in')
-    addLog(`Символов: ${maxChars} | Чанк: ${chunkSec}с | Concurrency: ${concurrency}`, 'dm')
-    if (isSilero) addLog(`Silero VAD ✓`, 'pu')
-    else if (isV12) addLog(`v12 Flag-Segmenter ✓`, 'pu')
-    else if (timingMode === 'vosk' && voskReady) addLog(`Vosk 2-pass ✓`, 'ok')
-    addLog('══════════════════════════════════════════════', 'dm')
+    const batchT0  = performance.now()
+    const newSrtMap = {}
 
     for (let fi = 0; fi < files.length; fi++) {
       if (stopFlagRef.current) break
-      const file      = files[fi]
-      const providers = prov === 'bo' ? ['el', 'gm'] : [prov]
+      const file = files[fi]
 
-      for (const p of providers) {
-        if (stopFlagRef.current) break
-        const provName = p==='el'?'ElevenLabs':p==='gm'?'Gemini':'OpenRouter'
-        const fileT0   = performance.now()
+      try {
+        addLog('', '')
+        addLog(`▶ [${fi+1}/${files.length}] ${file.name} (${(file.size/1e6).toFixed(1)} MB)`, 'ok')
 
-        // Длительность файла + кэш AudioBuffer для Phase 2
-        let fileDurStr = ''
+        // ── v12.5.4: Лог настроек ────────────────────────────────────────────
+        const isGmPath = prov === 'gm' || prov === 'bo' || prov === 'or'
+        if (isGmPath) {
+          addLog(
+            `⚙ chunkSec:${chunkSec} | concurrency:${concurrency} | maxOut:${maxOutLabel(chunkSec)} | dedup:${dedupWindow} | lang:${lang}`,
+            'dm'
+          )
+          addLog(
+            `⚙ classifier:${classifierMode} | ♪:${showMusicMarker?'вкл':'выкл'} | rms-timing:${useRmsTiming?'вкл':'выкл'} | fft:${useFFT&&useRmsTiming?'вкл':'выкл'}`,
+            'dm'
+          )
+        }
+
+        const fileT0 = performance.now()
+
+        // ── Кешируем AudioBuffer один раз ────────────────────────────────────
         let audioBufCached = null
         try {
           audioBufCached = await decodeAudio(file)
-          const totalSec = audioBufCached.duration
-          const mm = Math.floor(totalSec / 60)
-          const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
-          fileDurStr = ` (${mm}:${ss})`
+          addLog(`  Audio: ${audioBufCached.duration.toFixed(1)}с декодировано`, 'dm')
         } catch (_) {
-          // decodeAudio не сработал — пробуем Audio элемент только для длительности
+          // Fallback: Audio element for duration only
           try {
             const url = URL.createObjectURL(file)
-            const totalSec = await new Promise((res, rej) => {
-              const a = new Audio()
-              a.onloadedmetadata = () => { URL.revokeObjectURL(url); res(a.duration) }
-              a.onerror = rej
-              a.src = url
-            })
-            const mm = Math.floor(totalSec / 60)
-            const ss = Math.floor(totalSec % 60).toString().padStart(2, '0')
-            fileDurStr = ` (${mm}:${ss})`
+            const audio = new Audio(url)
+            await new Promise(r => { audio.onloadedmetadata = r; audio.onerror = r })
+            URL.revokeObjectURL(url)
           } catch (_) {}
         }
 
-        addLog(``, 'dm')
-        addLog(`▶ [${fi+1}/${files.length}] ${file.name}${fileDurStr}  (${provName})`, 'in')
-
-        try {
-          let segs = []
-
-          if (p === 'el') {
-            const t0 = performance.now()
-            segs = await transcribeEL(file, elKey, lang, maxChars, addLog)
-            addLog(`  ⏱ ElevenLabs: ${fmt(Math.round(performance.now()-t0))}`, 'pu')
-
-          } else if (p === 'gm') {
-
-            if (isV12 || isSilero) {
-              // ── Phase 1: Segment ──────────────────────────────────────────
-              const segLabel = isSilero ? 'Silero VAD' : 'v12 Segmenter'
-              addLog(`  Phase 1 — ${segLabel}...`, 'pu')
-              setVoskVisible(true)
-              const p1T0 = performance.now()
-
-              const { flagMap, chunks, totalMicroSegs } = isSilero
-                ? await segmentAudioSilero(file, chunkSec, minPause,
-                    (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') }, addLog)
-                : await segmentAudio(file, chunkSec, minPause,
-                    (pct, txt) => { setVoskPct(pct); setVoskText(txt) })
-              setVoskVisible(false)
-              const p1Ms = Math.round(performance.now() - p1T0)
-              addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков | ⏱ ${fmt(p1Ms)}`, 'ok')
-
-              // ── Phase 2: Dispatch ─────────────────────────────────────────
-              addLog(`  Phase 2 — Dispatcher (×${concurrency} параллельно)...`, 'gm-cl')
-              const p2T0     = performance.now()
-              const audioBuf = audioBufCached || await decodeAudio(file)
-
-              const { allText: textMap, fallbackEnds } = await dispatchChunks({
-                audioBuf, chunks,
-                apiKey: gmKey, lang, chunkSec, dedupWindow,
-                onLog: addLog,
-                onProgress: (pct, txt) => {
-                  setProgress(((fi * totalJobs) + done + pct/100) / totalJobs * 100)
-                  setProgressText(txt)
-                },
-                stopFlagRef,
-                concurrency,
-                gmModel
-              })
-              const p2Ms = Math.round(performance.now() - p2T0)
-              addLog(`  Phase 2 ✓ | ⏱ ${fmt(p2Ms)}`, 'ok')
-
-              // ── Phase 3: Assemble ─────────────────────────────────────────
-              const p3T0 = performance.now()
-              addLog(`  Phase 3 — Assembler...`, 'pu')
-              for (const [fid, endTime] of fallbackEnds) {
-                const entry = flagMap.get(fid)
-                if (entry) entry.end = endTime
-              }
-              const srtContent = assemble(flagMap, textMap, maxChars, mergeGap, mergeMode, dedupWindow, isSilero ? subTiming : 'vad')
-              const segCount   = (srtContent.match(/^\d+$/mg) || []).length
-              const p3Ms       = Math.round(performance.now() - p3T0)
-              addLog(`  Phase 3 ✓ — ${segCount} сегментов | ⏱ ${fmt(p3Ms)}`, 'ok')
-
-              const totalFileMs = Math.round(performance.now() - fileT0)
-              addLog(`  ⏱ ИТОГО файл: Phase1=${fmt(p1Ms)} + Phase2=${fmt(p2Ms)} + Phase3=${fmt(p3Ms)} = ${fmt(totalFileMs)}`, 'pu')
-
-              segs = parseSrt(srtContent)
-
-            } else {
-              // ── Smart / Vosk path ─────────────────────────────────────────
-              let preChunks = null
-              if (timingMode === 'vosk' && voskReady && voskModelRef?.current) {
-                addLog(`  Pass 1 — Vosk...`, 'pu')
-                setVoskVisible(true)
-                const vT0 = performance.now()
-                try {
-                  preChunks = await getVoskBoundaries(
-                    file, voskModelRef.current, addLog,
-                    (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
-                    () => setVoskVisible(false),
-                    stopFlagRef
-                  )
-                  addLog(`  Vosk ✓ | ⏱ ${fmt(Math.round(performance.now()-vT0))}`, 'ok')
-                } catch (e) {
-                  addLog(`  ⚠ Vosk: ${e.message}`, 'wa')
-                  setVoskVisible(false)
-                }
-              }
-              const gmT0 = performance.now()
-              segs = await transcribeGemini(file, gmKey, lang, chunkSec, maxChars,
-                preChunks, addLog, t => setProgressText(t), stopFlagRef)
-              addLog(`  ⏱ Gemini (smart): ${fmt(Math.round(performance.now()-gmT0))}`, 'pu')
-            }
-
-          } else if (p === 'or') {
-            let preChunks = null
-            if (timingMode === 'vosk' && voskReady && voskModelRef?.current) {
-              setVoskVisible(true)
-              try {
-                preChunks = await getVoskBoundaries(
-                  file, voskModelRef.current, addLog,
-                  (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
-                  () => setVoskVisible(false), stopFlagRef
-                )
-              } catch (_) { setVoskVisible(false) }
-            }
-            const orT0 = performance.now()
-            segs = await transcribeOpenRouter(file, orKey, orModel, lang, chunkSec, maxChars,
-              preChunks, addLog, t => setProgressText(t), stopFlagRef)
-            addLog(`  ⏱ OpenRouter: ${fmt(Math.round(performance.now()-orT0))}`, 'pu')
-          }
-
-          // Clamp overlaps
-          segs.sort((a, b) => a.start - b.start)
-          for (let i = 0; i < segs.length - 1; i++) {
-            if (segs[i].end > segs[i+1].start + 0.05)
-              segs[i].end = Math.max(segs[i].start + 0.1, segs[i+1].start - 0.05)
-          }
-
-          const suffix  = p==='el'?'_el':p==='or'?'_or':'_gm'
-          const srtName = file.name.replace(/\.[^.]+$/, '') + suffix + '.srt'
+        // ── ElevenLabs ───────────────────────────────────────────────────────
+        if (prov === 'el' || prov === 'bo') {
+          addLog(`  ElevenLabs...`, 'in')
+          const segs = await transcribeEL(file, elKey, lang, maxChars, null, addLog, p => setProgressText(p), stopFlagRef)
+          const srtName = file.name.replace(/\.[^.]+$/, '') + '_el.srt'
           const content = buildSrt(segs)
           downloadSrt(content, srtName)
           newSrtMap[srtName] = content
           done++
           setProgress(done / totalJobs * 100)
+          addLog(`  ✓ ${srtName} — ${segs.length} сег`, 'ok')
+        }
 
-          const fileTotalMs = Math.round(performance.now() - fileT0)
-          addLog(`  ✓ ${srtName} — ${segs.length} сег | ⏱ файл: ${fmt(fileTotalMs)}`, 'ok')
+        // ── Gemini / OpenRouter ───────────────────────────────────────────────
+        if ((prov === 'gm' || prov === 'or' || prov === 'bo') && !stopFlagRef.current) {
+          const isSilero = timingMode === 'silero'
+          const isV12    = timingMode === 'v12'
+          const useDispatcher = isSilero || isV12
 
-        } catch (e) {
-          addLog(`  ✗ ОШИБКА: ${e.message}`, 'er')
+          if (useDispatcher) {
+            // ── Phase 1: Segmentation ─────────────────────────────────────────
+            const segLabel = isSilero ? 'Silero VAD' : 'v12 Segmenter'
+            addLog(`  Phase 1 — ${segLabel}...`, 'pu')
+            setVoskVisible(true)
+            const p1T0 = performance.now()
+
+            const { flagMap, chunks, totalMicroSegs } = isSilero
+              ? await segmentAudioSilero(file, chunkSec, minPause,
+                  (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') }, addLog)
+              : await segmentAudio(file, chunkSec, minPause,
+                  (pct, txt) => { setVoskPct(pct); setVoskText(txt) })
+            setVoskVisible(false)
+            const p1Ms = Math.round(performance.now() - p1T0)
+            addLog(`  Phase 1 ✓ — ${totalMicroSegs} микро-сег → ${chunks.length} чанков | ⏱ ${fmt(p1Ms)}`, 'ok')
+
+            // ── v12.5.4: Audio Classifier ─────────────────────────────────────
+            let classMap = null
+            if (classifierMode !== 'off' && audioBufCached) {
+              const classT0   = performance.now()
+              const allSegs   = chunks.flatMap(c => c.segments)
+              classMap        = classifySegments(audioBufCached, allSegs)
+              const classMs   = Math.round(performance.now() - classT0)
+              const musicCount  = [...classMap.values()].filter(v => v.type === 'music').length
+              const speechCount = [...classMap.values()].filter(v => v.type === 'speech').length
+              const mixedCount  = [...classMap.values()].filter(v => v.type === 'mixed').length
+              const silentCount = [...classMap.values()].filter(v => v.type === 'silent').length
+              addLog(
+                `  Classifier ✓ — speech:${speechCount} music:${musicCount} mixed:${mixedCount} silent:${silentCount} | ⏱ ${fmt(classMs)}`,
+                'dm'
+              )
+            }
+
+            // ── Phase 2: Dispatch ─────────────────────────────────────────────
+            addLog(`  Phase 2 — Dispatcher (×${concurrency} параллельно)...`, 'gm-cl')
+            const p2T0    = performance.now()
+            const audioBuf = audioBufCached || await decodeAudio(file)
+
+            const { allText: textMap, fallbackEnds } = await dispatchChunks({
+              audioBuf, chunks,
+              apiKey: gmKey, lang, chunkSec, dedupWindow,
+              onLog: addLog,
+              onProgress: (pct, txt) => {
+                setProgress(((fi * totalJobs) + done + pct/100) / totalJobs * 100)
+                setProgressText(txt)
+              },
+              stopFlagRef,
+              concurrency,
+              gmModel,
+              classMap,
+              classifierMode,
+            })
+            const p2Ms = Math.round(performance.now() - p2T0)
+            addLog(`  Phase 2 ✓ | ⏱ ${fmt(p2Ms)}`, 'ok')
+
+            // ── Phase 3: Assemble ─────────────────────────────────────────────
+            const p3T0 = performance.now()
+            addLog(`  Phase 3 — Assembler...`, 'pu')
+            for (const [fid, endTime] of fallbackEnds) {
+              const entry = flagMap.get(fid)
+              if (entry) entry.end = endTime
+            }
+            const srtContent = assemble(
+              flagMap, textMap,
+              maxChars, mergeGap, mergeMode, dedupWindow,
+              isSilero ? subTiming : 'vad',
+              audioBufCached,   // v12.5.4
+              useRmsTiming,     // v12.5.4
+              useFFT,           // v12.5.4
+              showMusicMarker   // v12.5.4
+            )
+            const p3Ms = Math.round(performance.now() - p3T0)
+            addLog(`  Phase 3 ✓ | ⏱ ${fmt(p3Ms)}`, 'ok')
+
+            const srtName = file.name.replace(/\.[^.]+$/, '') + '_gm.srt'
+            downloadSrt(srtContent, srtName)
+            newSrtMap[srtName] = srtContent
+            done++
+            setProgress(done / totalJobs * 100)
+            const segCount = srtContent.split('\n\n').filter(b => b.trim()).length
+            const fileTotalMs = Math.round(performance.now() - fileT0)
+            addLog(`  ✓ ${srtName} — ${segCount} сег | ⏱ файл: ${fmt(fileTotalMs)}`, 'ok')
+
+          } else {
+            // ── Smart Silence / Vosk legacy path ─────────────────────────────
+            let preChunks = null
+            if (timingMode === 'vosk' && voskReady && voskModelRef?.current) {
+              addLog(`  Vosk Pass 1...`, 'pu')
+              setVoskVisible(true)
+              preChunks = await getVoskBoundaries(
+                file, voskModelRef.current, addLog,
+                (pct, txt) => { setVoskPct(pct); setVoskText(txt) },
+                () => setVoskVisible(false),
+                stopFlagRef
+              )
+              setVoskVisible(false)
+            }
+
+            addLog(`  Gemini Smart Silence...`, 'gm-cl')
+            const segs = await transcribeGemini(file, gmKey, lang, chunkSec, maxChars, preChunks, addLog, p => setProgressText(p), stopFlagRef)
+            const srtName = file.name.replace(/\.[^.]+$/, '') + '_gm.srt'
+            const content = buildSrt(segs)
+            downloadSrt(content, srtName)
+            newSrtMap[srtName] = content
+            done++
+            setProgress(done / totalJobs * 100)
+            addLog(`  ✓ ${srtName} — ${segs.length} сег`, 'ok')
+          }
+        }
+
+        // OpenRouter path
+        if (prov === 'or' && !stopFlagRef.current) {
+          addLog(`  OpenRouter (${orModel})...`, 'in')
+          const segs = await transcribeOpenRouter(file, orKey, orModel, lang, chunkSec, maxChars, addLog, p => setProgressText(p), stopFlagRef)
+          const srtName = file.name.replace(/\.[^.]+$/, '') + '_or.srt'
+          const content = buildSrt(segs)
+          downloadSrt(content, srtName)
+          newSrtMap[srtName] = content
           done++
           setProgress(done / totalJobs * 100)
+          addLog(`  ✓ ${srtName} — ${segs.length} сег`, 'ok')
         }
+
+      } catch (e) {
+        addLog(`  ✗ ОШИБКА: ${e.message}`, 'er')
+        done++
+        setProgress(done / totalJobs * 100)
       }
     }
 
