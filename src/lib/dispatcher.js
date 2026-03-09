@@ -1,8 +1,9 @@
 /**
- * v12.5.1 Dispatcher — timestamp-based prompt
+ * v12.5.3 Dispatcher — timestamp-based prompt
  * - Основная модель выбирается пользователем (gmModel)
  * - Fallback-цепочка из GM_MODELS[selected].fallback
  * - Детальный лог каждой попытки: модель → статус/ошибка
+ * - v12.5.3: SCRIPT_RULE — принудительный алфавит по языку
  */
 
 import { sliceToWav, blobToBase64, sleep } from './audioUtils.js'
@@ -12,6 +13,15 @@ const LANG_MAP = { uz:'Uzbek', ru:'Russian', en:'English', kk:'Kazakh', tg:'Taji
 const PROMPT_LEAK = /transcribe this|return only|json array|no speech|raw json|markdown/i
 // Галлюцинации — Gemini копирует временны́е метки из промпта вместо текста
 const TIMESTAMP_HALLUC = /^[\d]{1,2}:[\d]{2}(\s+[\d]{1,2}:[\d]{2})*\s*$/
+
+// v12.5.3: Принудительный алфавит — Gemini независимо решает скрипт для каждого чанка
+const SCRIPT_RULE = {
+  uz: 'Write ONLY in Uzbek Latin script (a b d e f g h i j k l m n o p q r s t u v x y z oʻ gʻ sh ch ng). NO Cyrillic.',
+  ru: 'Write ONLY in Cyrillic script. NO Latin.',
+  kk: 'Write ONLY in Kazakh Cyrillic script. NO Latin.',
+  tg: 'Write ONLY in Tajik Cyrillic script. NO Latin.',
+  en: 'Write ONLY in Latin script.',
+}
 
 function fmt(ms) {
   if (ms < 1000) return `${ms}мс`
@@ -99,16 +109,18 @@ async function callGemini(apiKey, b64wav, segments, langName, chunkDur, chunkSec
 }
 
 function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang) {
-  const n    = segments.length
-  const list = segments.map((s, i) =>
+  const n          = segments.length
+  const list       = segments.map((s, i) =>
     `  ${i+1}. ${s.localStart.toFixed(2)}s – ${s.localEnd.toFixed(2)}s`
   ).join('\n')
+  const scriptRule = SCRIPT_RULE[lang] || ''  // v12.5.3: алфавит по языку
 
   return (
     `Transcribe this ${langName} audio clip (${chunkDur.toFixed(1)}s, chunk: ${chunkSec}s).\n\n` +
     `It has ${n} speech segment(s) at these time ranges:\n` +
     `${list}\n\n` +
     `Transcription rules:\n` +
+    (scriptRule ? `- ${scriptRule}\n` : '') +
     `- Use full linguistic intelligence: interpret abbreviations, names, terminology correctly.\n` +
     `- Names, brands, and terms: write them using ${langName} orthography and spelling conventions — as a native ${langName} speaker would naturally write them, not transliterated from another language.\n` +
     (dedupWindow === 0
