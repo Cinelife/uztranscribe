@@ -27,19 +27,19 @@ export default function App() {
   const [timingMode,  setTimingMode]  = useState('smart')
   const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
   const [gmModel,     setGmModel]     = useState(GM_MODELS[0].id)
-
-  // v12.5: Concurrency — параллельность запросов к Gemini
   const [concurrency, setConcurrency] = useState(8)
+
+  // v12.5.4 — экспериментальные настройки
+  const [classifierMode,   setClassifierMode]   = useState('off')   // 'off'|'hint'|'full'
+  const [showMusicMarker,  setShowMusicMarker]  = useState(false)
+  const [useRmsTiming,     setUseRmsTiming]     = useState(false)
+  const [useFFT,           setUseFFT]           = useState(false)
 
   const [files,        setFiles]        = useState([])
   const [fileStatuses, setFileStatuses] = useState({})
 
-  const [voskReady, setVoskReady] = useState(false)
-  const voskModelRef              = useRef(null)
-
-  const [trProvider, setTrProvider] = useState('gm')
-  const [trSrc,      setTrSrc]      = useState('last')
-  const [trPair,     setTrPair]     = useState('uz|ru')
+  const voskModelRef = useRef(null)
+  const [voskReady,  setVoskReady]  = useState(false)
 
   const {
     log, clearLog,
@@ -50,7 +50,11 @@ export default function App() {
   } = useBatchRunner()
 
   const {
-    trLog, clearTrLog, trStatus, trRunning, startTranslate
+    trLog, clearTrLog, trStatus, trRunning,
+    trProvider, setTrProvider,
+    trSrc, setTrSrc,
+    trPair, setTrPair,
+    handleTranslate
   } = useTranslation()
 
   const handleStart = () => startBatch({
@@ -58,31 +62,23 @@ export default function App() {
     dedupWindow, subTiming,
     elKey, gmKey, orKey, orModel, gmModel,
     voskReady, voskModelRef,
-    concurrency   // v12.5
-  })
-
-  const handleTranslate = ({ trFileRef }) => startTranslate({
-    gmKey, orKey, orModel,
-    trProvider, trSrc, trPair,
-    lastSrtMap, trFileRef
+    concurrency,
+    // v12.5.4
+    classifierMode,
+    showMusicMarker,
+    useRmsTiming,
+    useFFT,
   })
 
   return (
     <div className="wrap">
       <Header />
 
-      <div className="info">
-        📥 SRT → <strong>Downloads</strong> автоматически &nbsp;|&nbsp;
-        💰 <strong>Gemini</strong> бесплатно до ~2 ч/день &nbsp;|&nbsp;
-        <strong>ElevenLabs</strong> $0.40/час &nbsp;|&nbsp;
-        🔀 <strong>OpenRouter</strong> — гибкий выбор модели &nbsp;|&nbsp;
-        🔬 <strong>Vosk 2-pass</strong> &nbsp;|&nbsp;
-        🌐 Перевод с культурной адаптацией
-      </div>
-
       <ApiKeysCard
-        elKey={elKey} gmKey={gmKey} orKey={orKey}
-        setElKey={setElKey} setGmKey={setGmKey} setOrKey={setOrKey}
+        elKey={elKey} setElKey={setElKey}
+        gmKey={gmKey} setGmKey={setGmKey}
+        orKey={orKey} setOrKey={setOrKey}
+        prov={prov}
       />
 
       <SettingsCard
@@ -101,6 +97,10 @@ export default function App() {
         voskReady={voskReady} setVoskReady={setVoskReady}
         voskModelRef={voskModelRef}
         concurrency={concurrency} setConcurrency={setConcurrency}
+        classifierMode={classifierMode}   setClassifierMode={setClassifierMode}
+        showMusicMarker={showMusicMarker} setShowMusicMarker={setShowMusicMarker}
+        useRmsTiming={useRmsTiming}       setUseRmsTiming={setUseRmsTiming}
+        useFFT={useFFT}                   setUseFFT={setUseFFT}
       />
 
       <FilesCard
