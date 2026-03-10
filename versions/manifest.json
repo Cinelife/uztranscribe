@@ -1,6 +1,6 @@
 {
-  "current": "12.5.0",
-  "currentLabel": "12.5.0",
+  "current": "12.5.4",
+  "currentLabel": "12.5.4",
   "currentDate": "2026-03-10",
   "versions": [
     {
@@ -8,6 +8,12 @@
       "label": "12.5.4",
       "date": "2026-03-10",
       "path": "versions/12.5.4/"
+    },
+    {
+      "id": "12.5.0",
+      "label": "12.5.0",
+      "date": "2026-03-10",
+      "path": "versions/12.5.0/"
     },
     {
       "id": "12.0.0",
