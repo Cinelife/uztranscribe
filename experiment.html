@@ -2,103 +2,174 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Multi-Audio Test</title>
+<title>Multi-Audio Test · UzTranscribe</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; }
-  .wrap { max-width: 800px; margin: 0 auto; }
-  .header { border-bottom: 1px solid #111827; padding-bottom: 14px; margin-bottom: 20px; }
-  .label { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
-  input[type=password], input[type=number] { background: #0d1520; border: 1px solid #111827; border-radius: 6px; padding: 8px 10px; color: #e2e8f0; font-family: inherit; font-size: 12px; outline: none; }
-  input[type=password] { width: 100%; }
-  .models { display: flex; gap: 6px; }
-  .model-btn { padding: 8px 12px; border-radius: 6px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; }
-  .model-btn.active { background: #1e3a8a; border-color: #3b82f6; color: #93c5fd; }
-  .dropzone { border: 1px dashed #111827; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; margin-bottom: 16px; transition: all 0.2s; }
-  .dropzone.loaded { border-color: #1d4ed8; background: #0a1628; color: #60a5fa; }
-  .dropzone.empty { color: #1f2937; }
-  .seg-row { display: flex; align-items: center; gap: 6px; background: #0d1520; border-radius: 6px; padding: 6px 10px; border: 1px solid #111827; margin-bottom: 4px; }
-  .seg-row input { width: 65px; background: #111827; border: none; border-radius: 4px; padding: 3px 6px; color: #e2e8f0; font-family: inherit; font-size: 11px; }
-  .btn-run { width: 100%; padding: 11px; border-radius: 8px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: 2px; transition: all 0.2s; margin-bottom: 16px; }
-  .btn-run:enabled { background: #1d4ed8; color: #fff; }
-  .btn-run:disabled { background: #111827; color: #374151; cursor: default; }
-  .btn-add { background: none; border: 1px dashed #111827; border-radius: 6px; padding: 5px 12px; color: #374151; cursor: pointer; font-family: inherit; font-size: 11px; margin-top: 4px; margin-bottom: 14px; }
-  .btn-del { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; padding: 0 4px; margin-left: auto; }
-  .btn-del:disabled { color: #1f2937; cursor: default; }
-  .verdict { padding: 12px 14px; border-radius: 8px; border: 1px solid; margin-bottom: 14px; }
-  .verdict.ok { background: #052e16; border-color: #166534; }
-  .verdict.warn { background: #422006; border-color: #92400e; }
-  .verdict.err { background: #1c0a0a; border-color: #7f1d1d; }
-  .verdict-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
-  .verdict-text { display: flex; gap: 8px; margin-bottom: 3px; }
-  .log-box { background: #040810; border: 1px solid #0d1520; border-radius: 8px; padding: 10px 12px; max-height: 400px; overflow-y: auto; }
-  .log-line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
-  .grid2 { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 16px; align-items: end; }
-  .muted { color: #374151; font-size: 10px; margin-top: 6px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; min-height: 100vh; }
+.wrap { max-width: 820px; margin: 0 auto; }
+
+/* Header */
+.header { border-bottom: 1px solid #111827; padding-bottom: 14px; margin-bottom: 20px; }
+.header-sub { font-size: 10px; color: #3b82f6; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+.header-title { font-size: 18px; font-weight: 700; color: #f1f5f9; }
+.header-desc { color: #4b5563; font-size: 11px; margin-top: 3px; }
+
+/* Label */
+.lbl { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
+
+/* Grid */
+.grid2 { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 16px; align-items: end; }
+
+/* API Key */
+input[type=password] { width: 100%; background: #0d1520; border: 1px solid #111827; border-radius: 6px; padding: 8px 10px; color: #e2e8f0; font-family: inherit; font-size: 12px; outline: none; }
+input[type=password]:focus { border-color: #1d4ed8; }
+
+/* Model buttons */
+.models { display: flex; gap: 5px; flex-wrap: wrap; }
+.model-btn { padding: 7px 11px; border-radius: 6px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.model-btn.active { background: #1e3a8a; border-color: #3b82f6; color: #93c5fd; }
+.model-btn:hover:not(.active) { border-color: #1e293b; color: #64748b; }
+
+/* Dropzone */
+.dropzone { border: 1px dashed #111827; border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; margin-bottom: 16px; transition: all 0.2s; user-select: none; }
+.dropzone.empty { color: #1f2937; }
+.dropzone.loaded { border-color: #1d4ed8; background: #0a1628; color: #60a5fa; }
+.dropzone:hover { border-color: #1e293b; }
+
+/* Segment editor */
+.seg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.seg-hint { color: #1f2937; font-size: 10px; }
+
+/* Segment row — draggable */
+.seg-row {
+  display: flex; align-items: center; gap: 6px;
+  background: #0d1520; border-radius: 6px; padding: 7px 10px;
+  border: 1px solid #111827; margin-bottom: 4px;
+  cursor: grab; user-select: none; transition: all 0.15s;
+}
+.seg-row:active { cursor: grabbing; }
+.seg-row.dragging { opacity: 0.4; border-style: dashed; }
+.seg-row.drag-over { border-color: #3b82f6; background: #0a1628; }
+.drag-handle { color: #1f2937; font-size: 14px; cursor: grab; padding: 0 2px; flex-shrink: 0; }
+.drag-handle:hover { color: #374151; }
+.seg-row input[type=number] { width: 65px; background: #111827; border: none; border-radius: 4px; padding: 3px 6px; color: #e2e8f0; font-family: inherit; font-size: 11px; outline: none; }
+.seg-row input[type=number]:focus { background: #1e293b; }
+.seg-idx { color: #3b82f6; min-width: 18px; font-size: 11px; flex-shrink: 0; }
+.seg-lbl { color: #374151; font-size: 10px; flex-shrink: 0; }
+.seg-dur { color: #374151; font-size: 10px; margin-left: 2px; min-width: 36px; }
+.btn-del { background: none; border: none; cursor: pointer; font-size: 14px; padding: 0 3px; margin-left: auto; flex-shrink: 0; transition: color 0.15s; }
+.btn-del:not(:disabled) { color: #ef4444; }
+.btn-del:disabled { color: #1f2937; cursor: default; }
+
+.btn-add { background: none; border: 1px dashed #111827; border-radius: 6px; padding: 5px 14px; color: #374151; cursor: pointer; font-family: inherit; font-size: 11px; margin-top: 4px; margin-bottom: 16px; transition: all 0.15s; }
+.btn-add:hover { border-color: #1e293b; color: #4b5563; }
+
+/* Run */
+.btn-run { width: 100%; padding: 11px; border-radius: 8px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: 2px; transition: all 0.2s; margin-bottom: 16px; }
+.btn-run:enabled { background: #1d4ed8; color: #fff; }
+.btn-run:enabled:hover { background: #2563eb; }
+.btn-run:disabled { background: #111827; color: #374151; cursor: default; }
+
+/* Verdict */
+.verdict { padding: 12px 14px; border-radius: 8px; border: 1px solid; margin-bottom: 14px; display: none; }
+.verdict.ok   { background: #052e16; border-color: #166534; }
+.verdict.warn { background: #422006; border-color: #92400e; }
+.verdict.err  { background: #1c0a0a; border-color: #7f1d1d; }
+.verdict-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.verdict-row { display: flex; gap: 8px; margin-bottom: 3px; }
+.verdict-idx { color: #3b82f6; min-width: 20px; font-size: 11px; flex-shrink: 0; }
+.verdict-text { color: #cbd5e1; font-size: 12px; }
+
+/* Log */
+.log-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.log-actions { display: flex; gap: 6px; }
+.btn-log { background: #0d1520; border: 1px solid #111827; border-radius: 5px; padding: 4px 10px; color: #4b5563; cursor: pointer; font-family: inherit; font-size: 10px; letter-spacing: 1px; transition: all 0.15s; }
+.btn-log:hover { border-color: #1e293b; color: #64748b; }
+.log-box { background: #040810; border: 1px solid #0d1520; border-radius: 8px; padding: 10px 12px; max-height: 420px; overflow-y: auto; display: none; }
+.log-line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
+
+/* Misc */
+.muted { color: #374151; font-size: 10px; margin-top: 6px; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div class="header">
-    <div style="font-size:10px;color:#3b82f6;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px">UzTranscribe · Experiment</div>
-    <div style="font-size:18px;font-weight:700;color:#f1f5f9">Multi-Audio API Test</div>
-    <div style="color:#4b5563;font-size:11px;margin-top:3px">Видит ли Gemini N отдельных WAV-файлов в одном запросе?</div>
+    <div class="header-sub">UzTranscribe · Experiment Lab</div>
+    <div class="header-title">Multi-Audio API Test</div>
+    <div class="header-desc">Видит ли Gemini N отдельных WAV-файлов в одном запросе? · Перетащи сегменты чтобы поменять порядок</div>
   </div>
 
+  <!-- API Key + Models -->
   <div class="grid2">
     <div>
-      <div class="label">API KEY</div>
+      <div class="lbl">API KEY</div>
       <input type="password" id="apiKey" placeholder="AIzaSy..." />
     </div>
     <div>
-      <div class="label">МОДЕЛЬ</div>
+      <div class="lbl">МОДЕЛЬ</div>
       <div class="models" id="modelBtns"></div>
     </div>
   </div>
 
-  <div class="dropzone empty" id="dropzone" onclick="document.getElementById('fileInput').click()">
+  <!-- Dropzone -->
+  <div class="dropzone empty" id="dropzone" onclick="document.getElementById('fileInput').click()"
+    ondragover="event.preventDefault()" ondrop="event.preventDefault();if(event.dataTransfer.files[0])loadFile(event.dataTransfer.files[0])">
     ⊕ Загрузить аудио (drag & drop или клик)
   </div>
-  <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none">
+  <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="if(this.files[0])loadFile(this.files[0])">
 
-  <div id="segEditor" style="display:none;margin-bottom:4px">
-    <div class="label" style="margin-bottom:8px">СЕГМЕНТЫ</div>
+  <!-- Segment editor -->
+  <div id="segEditor" style="display:none">
+    <div class="seg-header">
+      <div class="lbl" style="margin-bottom:0">СЕГМЕНТЫ <span id="segCount" style="color:#374151"></span></div>
+      <div class="seg-hint">⠿ тащи чтобы переставить</div>
+    </div>
     <div id="segList"></div>
     <button class="btn-add" onclick="addSeg()">+ добавить сегмент</button>
   </div>
 
+  <!-- Run -->
   <button class="btn-run" id="runBtn" onclick="runTest()" disabled>▶ ЗАПУСТИТЬ ТЕСТ</button>
 
-  <div id="verdict" style="display:none" class="verdict"></div>
+  <!-- Verdict -->
+  <div class="verdict" id="verdict"></div>
 
-  <div id="logWrap" style="display:none">
-    <div class="label" style="margin-bottom:6px">ЛОГ</div>
+  <!-- Log -->
+  <div id="logSection" style="display:none">
+    <div class="log-toolbar">
+      <div class="lbl" style="margin-bottom:0">ЛОГ</div>
+      <div class="log-actions">
+        <button class="btn-log" onclick="clearLog()">✕ ОЧИСТИТЬ</button>
+        <button class="btn-log" onclick="downloadLog()">⬇ СКАЧАТЬ</button>
+      </div>
+    </div>
     <div class="log-box" id="logBox"></div>
   </div>
 
 </div>
 
 <script>
+// ── Models ─────────────────────────────────────────────────────────────────
 const MODELS = [
-  { id: 'gemini-2.5-flash',                      label: '2.5 Flash' },
-  { id: 'gemini-2.5-flash-lite-preview-06-17',   label: '2.5 Flash Lite' },
-  { id: 'gemini-2.0-flash',                       label: '2.0 Flash' },
+  { id: 'gemini-2.5-flash',                    label: '2.5 Flash' },
+  { id: 'gemini-2.5-flash-lite-preview-05-20', label: '2.5 Flash Lite' },
+  { id: 'gemini-2.0-flash-lite',               label: '2.0 Flash Lite' },
 ]
-const LOG_COLORS = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#60a5fa', dim:'#374151', result:'#e2e8f0' }
+const LOG_C = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#60a5fa', dim:'#374151', result:'#e2e8f0' }
 
 let currentModel = MODELS[0].id
-let audioBuf = null
-let duration = 0
-let segments = []
-let running = false
+let audioBuf = null, duration = 0, segments = [], running = false
+let dragSrc = null
 
-// ── Model buttons ─────────────────────────────────────────────────────────
+// ── Build model buttons ────────────────────────────────────────────────────
 const btnWrap = document.getElementById('modelBtns')
 MODELS.forEach(m => {
   const b = document.createElement('button')
   b.className = 'model-btn' + (m.id === currentModel ? ' active' : '')
   b.textContent = m.label
+  b.dataset.id = m.id
   b.onclick = () => {
     currentModel = m.id
     document.querySelectorAll('.model-btn').forEach(x => x.classList.remove('active'))
@@ -107,14 +178,9 @@ MODELS.forEach(m => {
   btnWrap.appendChild(b)
 })
 
-// ── Drag & drop ───────────────────────────────────────────────────────────
-const dz = document.getElementById('dropzone')
-dz.addEventListener('dragover', e => e.preventDefault())
-dz.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) loadFile(f) })
-document.getElementById('fileInput').addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]) })
-
-// ── Load & decode file ────────────────────────────────────────────────────
+// ── Load & decode audio ────────────────────────────────────────────────────
 async function loadFile(f) {
+  const dz = document.getElementById('dropzone')
   dz.className = 'dropzone'
   dz.textContent = '⏳ Декодирую...'
   try {
@@ -124,56 +190,96 @@ async function loadFile(f) {
     duration = audioBuf.duration
     const t = duration / 3
     segments = [
-      { start: 0,            end: +t.toFixed(1) },
-      { start: +t.toFixed(1), end: +(t*2).toFixed(1) },
+      { start: 0,              end: +t.toFixed(1) },
+      { start: +t.toFixed(1),  end: +(t*2).toFixed(1) },
       { start: +(t*2).toFixed(1), end: +duration.toFixed(1) },
     ]
     dz.className = 'dropzone loaded'
-    dz.textContent = `✓ ${f.name} · ${duration.toFixed(2)}s`
-    renderSegs()
+    dz.textContent = `✓ ${f.name} · ${duration.toFixed(2)}s · ${audioBuf.sampleRate}Hz`
     document.getElementById('segEditor').style.display = 'block'
     document.getElementById('runBtn').disabled = false
+    renderSegs()
   } catch(e) {
     dz.className = 'dropzone empty'
-    dz.textContent = `✗ Ошибка: ${e.message}`
+    dz.textContent = `✗ Ошибка декодирования: ${e.message}`
   }
 }
 
-// ── Segment editor ────────────────────────────────────────────────────────
+// ── Segment render + drag-to-reorder ──────────────────────────────────────
 function renderSegs() {
   const list = document.getElementById('segList')
   list.innerHTML = ''
+  document.getElementById('segCount').textContent = `· ${segments.length} шт`
+
   segments.forEach((s, i) => {
     const row = document.createElement('div')
     row.className = 'seg-row'
+    row.draggable = true
+    row.dataset.idx = i
+
     row.innerHTML = `
-      <span style="color:#3b82f6;min-width:18px;font-size:11px">[${i+1}]</span>
-      <span style="color:#374151;font-size:10px">start</span>
-      <input type="number" value="${s.start}" step="0.1" min="0" max="${duration}" oninput="segments[${i}].start=+this.value;updateDur(${i})">
-      <span style="color:#374151;font-size:10px">end</span>
-      <input type="number" value="${s.end}" step="0.1" min="0" max="${duration}" oninput="segments[${i}].end=+this.value;updateDur(${i})">
-      <span id="dur${i}" style="color:#374151;font-size:10px;margin-left:4px">${(s.end-s.start).toFixed(1)}s</span>
+      <span class="drag-handle">⠿</span>
+      <span class="seg-idx">[${i+1}]</span>
+      <span class="seg-lbl">start</span>
+      <input type="number" value="${s.start}" step="0.1" min="0" max="${duration.toFixed(1)}"
+        oninput="segments[${i}].start=+this.value;updateDur(${i})">
+      <span class="seg-lbl">end</span>
+      <input type="number" value="${s.end}" step="0.1" min="0" max="${duration.toFixed(1)}"
+        oninput="segments[${i}].end=+this.value;updateDur(${i})">
+      <span class="seg-dur" id="dur${i}">${(s.end-s.start).toFixed(1)}s</span>
       <button class="btn-del" onclick="removeSeg(${i})" ${segments.length<=2?'disabled':''}>×</button>
     `
+
+    // Drag events
+    row.addEventListener('dragstart', e => {
+      dragSrc = i
+      setTimeout(() => row.classList.add('dragging'), 0)
+      e.dataTransfer.effectAllowed = 'move'
+    })
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging')
+      document.querySelectorAll('.seg-row').forEach(r => r.classList.remove('drag-over'))
+    })
+    row.addEventListener('dragover', e => {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      document.querySelectorAll('.seg-row').forEach(r => r.classList.remove('drag-over'))
+      row.classList.add('drag-over')
+    })
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'))
+    row.addEventListener('drop', e => {
+      e.preventDefault()
+      row.classList.remove('drag-over')
+      const target = +row.dataset.idx
+      if(dragSrc === null || dragSrc === target) return
+      const moved = segments.splice(dragSrc, 1)[0]
+      segments.splice(target, 0, moved)
+      dragSrc = null
+      renderSegs()
+    })
+
     list.appendChild(row)
   })
 }
+
 function updateDur(i) {
-  const d = document.getElementById('dur'+i)
-  if(d) d.textContent = (segments[i].end - segments[i].start).toFixed(1) + 's'
+  const el = document.getElementById('dur'+i)
+  if(el) el.textContent = (segments[i].end - segments[i].start).toFixed(1) + 's'
 }
+
 function addSeg() {
   const last = segments[segments.length-1]
-  segments.push({ start: last.end, end: Math.min(+(last.end+10).toFixed(1), duration) })
+  segments.push({ start: last.end, end: +Math.min(last.end+10, duration).toFixed(1) })
   renderSegs()
 }
+
 function removeSeg(i) {
   if(segments.length <= 2) return
   segments.splice(i, 1)
   renderSegs()
 }
 
-// ── Audio utils ───────────────────────────────────────────────────────────
+// ── Audio utils ────────────────────────────────────────────────────────────
 function sliceToWav(buf, startS, endS) {
   const sr = buf.sampleRate
   const s0 = Math.floor(startS * sr)
@@ -188,15 +294,15 @@ function sliceToWav(buf, startS, endS) {
     const ch = rendered.getChannelData(0)
     const ab = new ArrayBuffer(44 + ch.length*2)
     const v = new DataView(ab)
-    const w = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)) }
+    const w = (o, s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)) }
     w(0,'RIFF'); v.setUint32(4,36+ch.length*2,true); w(8,'WAVE'); w(12,'fmt ')
     v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true)
     v.setUint32(24,sr,true); v.setUint32(28,sr*2,true)
     v.setUint16(32,2,true); v.setUint16(34,16,true)
     w(36,'data'); v.setUint32(40,ch.length*2,true)
     for(let i=0;i<ch.length;i++)
-      v.setInt16(44+i*2,Math.max(-32768,Math.min(32767,ch[i]*32767)),true)
-    return new Blob([ab],{type:'audio/wav'})
+      v.setInt16(44+i*2, Math.max(-32768,Math.min(32767,ch[i]*32767)), true)
+    return new Blob([ab], {type:'audio/wav'})
   })
 }
 
@@ -209,35 +315,53 @@ function blobToB64(blob) {
   })
 }
 
-// ── Log ───────────────────────────────────────────────────────────────────
+// ── Log ────────────────────────────────────────────────────────────────────
+let logLines = []
+
 function push(msg, type='info') {
+  logLines.push({ msg, type })
   const box = document.getElementById('logBox')
+  box.style.display = 'block'
+  document.getElementById('logSection').style.display = 'block'
   const line = document.createElement('div')
   line.className = 'log-line'
-  line.style.color = LOG_COLORS[type] || LOG_COLORS.info
-  line.style.fontSize = type==='dim' ? '10px' : '11px'
+  line.style.color = LOG_C[type] || LOG_C.info
+  line.style.fontSize = type === 'dim' ? '10px' : '11px'
   line.textContent = msg
   box.appendChild(line)
   box.scrollTop = box.scrollHeight
 }
 
-// ── Main test ─────────────────────────────────────────────────────────────
+function clearLog() {
+  logLines = []
+  document.getElementById('logBox').innerHTML = ''
+  document.getElementById('verdict').style.display = 'none'
+}
+
+function downloadLog() {
+  if(!logLines.length) return
+  const text = logLines.map(l => l.msg).join('\n')
+  const blob = new Blob([text], {type:'text/plain'})
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `multi-audio-test_${currentModel}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.txt`
+  a.click()
+}
+
+// ── Main test ──────────────────────────────────────────────────────────────
 async function runTest() {
   const apiKey = document.getElementById('apiKey').value.trim()
   if(!apiKey || !audioBuf || running) return
   running = true
-
   document.getElementById('runBtn').disabled = true
   document.getElementById('runBtn').textContent = '⏳ ЗАПРОС ОТПРАВЛЕН...'
-  document.getElementById('logBox').innerHTML = ''
-  document.getElementById('logWrap').style.display = 'block'
-  document.getElementById('verdict').style.display = 'none'
-
+  clearLog()
   const t0 = performance.now()
 
   try {
     push(`━━ ТЕСТ: Multi-audio в одном запросе ━━`, 'head')
     push(`Модель: ${currentModel}`)
+    push(`Порядок сегментов: ${segments.map((_,i)=>'['+(i+1)+']').join(' → ')}`)
     push(`Нарезаю ${segments.length} сегментов...`)
 
     const wavBlobs = []
@@ -277,16 +401,16 @@ async function runTest() {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
       {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          contents:[{ parts:[...audioParts,{text:prompt}] }],
-          generationConfig:{ temperature:0, maxOutputTokens:2048 }
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [...audioParts, { text: prompt }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 2048 }
         })
       }
     )
-    const apiMs = Math.round(performance.now()-apiT0)
-    push(`HTTP ${resp.status} · ${apiMs}ms`, resp.ok?'ok':'err')
+    const apiMs = Math.round(performance.now() - apiT0)
+    push(`HTTP ${resp.status} · ${apiMs}ms`, resp.ok ? 'ok' : 'err')
 
     const raw = await resp.json()
     push(``)
@@ -308,6 +432,13 @@ async function runTest() {
     push(`─────────────────────────────────────────`, 'dim')
     push(``)
 
+    // Usage
+    const u = raw.usageMetadata
+    if(u) {
+      push(`Токены: prompt=${u.promptTokenCount} (audio=${u.promptTokensDetails?.find(d=>d.modality==='AUDIO')?.tokenCount||'?'} text=${u.promptTokensDetails?.find(d=>d.modality==='TEXT')?.tokenCount||'?'}) → output=${u.candidatesTokenCount}`, 'dim')
+      push(``)
+    }
+
     let parsed = null
     try {
       let s = text
@@ -320,11 +451,14 @@ async function runTest() {
 
     if(parsed && Array.isArray(parsed)) {
       const match = parsed.length === segments.length
-      push(`✓ Распарсено: ${parsed.length} строк (ожидалось ${segments.length})`, match?'ok':'warn')
+      push(`✓ Распарсено: ${parsed.length} строк (ожидалось ${segments.length}) ${match?'✓':'⚠'}`, match?'ok':'warn')
       parsed.forEach((t,i) => push(`  [${i+1}] "${t}"`, 'result'))
+      push(``)
+      push(`Итого: ${Math.round(performance.now()-t0)}ms`, 'dim')
       showVerdict(true, parsed, segments.length, null, Math.round(performance.now()-t0))
     } else {
       push(`✗ Не удалось распарсить JSON`, 'err')
+      push(`Сырой текст: ${text}`, 'warn')
       showVerdict(false, null, null, 'JSON parse failed')
     }
 
@@ -342,8 +476,8 @@ function showVerdict(success, texts, expected, error, ms) {
   const el = document.getElementById('verdict')
   el.style.display = 'block'
   const match = success && texts && texts.length === expected
-  el.className = 'verdict ' + (match?'ok':success?'warn':'err')
-  const titleColor = match?'#4ade80':success?'#fbbf24':'#f87171'
+  el.className = 'verdict ' + (match ? 'ok' : success ? 'warn' : 'err')
+  const titleColor = match ? '#4ade80' : success ? '#fbbf24' : '#f87171'
   const title = match
     ? `✅ РАБОТАЕТ — Gemini вернул ${texts.length}/${expected} сегментов`
     : success
@@ -351,7 +485,10 @@ function showVerdict(success, texts, expected, error, ms) {
     : `❌ ОШИБКА — ${error}`
   let html = `<div class="verdict-title" style="color:${titleColor}">${title}</div>`
   if(texts) texts.forEach((t,i) => {
-    html += `<div class="verdict-text"><span style="color:#3b82f6;min-width:20px;font-size:11px">[${i+1}]</span><span style="color:#cbd5e1;font-size:12px">${t||'<em style="color:#374151">(пусто)</em>'}</span></div>`
+    html += `<div class="verdict-row">
+      <span class="verdict-idx">[${i+1}]</span>
+      <span class="verdict-text">${t || '<em style="color:#374151">(пусто)</em>'}</span>
+    </div>`
   })
   if(ms) html += `<div class="muted">Итого: ${ms}ms</div>`
   el.innerHTML = html
