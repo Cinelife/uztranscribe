@@ -18,17 +18,22 @@ body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monos
 .lbl { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
 
 /* Grid */
-.grid2 { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 16px; align-items: end; }
+.grid2 { display: grid; grid-template-columns: 1fr 260px; gap: 12px; margin-bottom: 16px; align-items: start; }
 
 /* API Key */
 input[type=password] { width: 100%; background: #0d1520; border: 1px solid #111827; border-radius: 6px; padding: 8px 10px; color: #e2e8f0; font-family: inherit; font-size: 12px; outline: none; }
 input[type=password]:focus { border-color: #1d4ed8; }
 
 /* Model buttons */
-.models { display: flex; gap: 5px; flex-wrap: wrap; }
-.model-btn { padding: 7px 11px; border-radius: 6px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.models { display: flex; flex-direction: column; gap: 3px; min-width: 240px; }
+.model-btn { padding: 6px 10px; border-radius: 5px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; text-align: left; display: flex; justify-content: space-between; align-items: center; }
+.model-btn .m-name { flex: 1; }
+.model-btn .m-price { font-size: 10px; color: #1f2937; margin-left: 8px; }
+.model-btn .m-status { font-size: 10px; margin-left: 6px; }
 .model-btn.active { background: #1e3a8a; border-color: #3b82f6; color: #93c5fd; }
+.model-btn.active .m-price { color: #60a5fa; }
 .model-btn:hover:not(.active) { border-color: #1e293b; color: #64748b; }
+.model-btn:hover:not(.active) .m-price { color: #374151; }
 
 /* Dropzone */
 .dropzone { border: 1px dashed #111827; border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; margin-bottom: 16px; transition: all 0.2s; user-select: none; }
@@ -153,9 +158,11 @@ input[type=password]:focus { border-color: #1d4ed8; }
 <script>
 // ── Models ─────────────────────────────────────────────────────────────────
 const MODELS = [
-  { id: 'gemini-2.5-flash',                    label: '2.5 Flash' },
-  { id: 'gemini-2.5-flash-lite-preview-05-20', label: '2.5 Flash Lite' },
-  { id: 'gemini-2.0-flash-lite',               label: '2.0 Flash Lite' },
+  { id: 'gemini-2.5-flash',      label: '2.5 Flash',      price: '$0.119/ч', rpm: '10 RPM' },
+  { id: 'gemini-2.5-flash-lite', label: '2.5 Flash Lite', price: '$0.031/ч', rpm: '10 RPM' },
+  { id: 'gemini-2.0-flash',      label: '2.0 Flash',      price: '$0.071/ч', rpm: '15 RPM' },
+  { id: 'gemini-2.0-flash-lite', label: '2.0 Flash Lite', price: '$0.040/ч', rpm: '30 RPM' },
+  { id: 'gemini-1.5-flash',      label: '1.5 Flash',      price: '$0.010/ч', rpm: '15 RPM' },
 ]
 const LOG_C = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#60a5fa', dim:'#374151', result:'#e2e8f0' }
 
@@ -168,8 +175,8 @@ const btnWrap = document.getElementById('modelBtns')
 MODELS.forEach(m => {
   const b = document.createElement('button')
   b.className = 'model-btn' + (m.id === currentModel ? ' active' : '')
-  b.textContent = m.label
   b.dataset.id = m.id
+  b.innerHTML = `<span class="m-name">${m.label}</span><span class="m-price">${m.price} · ${m.rpm}</span><span class="m-status" id="status_${m.id.replace(/\./g,'_')}"></span>`
   b.onclick = () => {
     currentModel = m.id
     document.querySelectorAll('.model-btn').forEach(x => x.classList.remove('active'))
@@ -490,8 +497,13 @@ function showVerdict(success, texts, expected, error, ms) {
       <span class="verdict-text">${t || '<em style="color:#374151">(пусто)</em>'}</span>
     </div>`
   })
-  if(ms) html += `<div class="muted">Итого: ${ms}ms</div>`
+  if(ms) html += `<div class="muted">Итого: ${ms}ms · ${currentModel}</div>`
   el.innerHTML = html
+
+  // Ставим статус-точку на кнопку модели
+  const statusEl = document.getElementById('status_' + currentModel.replace(/\./g,'_'))
+  if(statusEl) statusEl.textContent = match ? '✓' : success ? '⚠' : '✗'
+  if(statusEl) statusEl.style.color = match ? '#4ade80' : success ? '#fbbf24' : '#f87171'
 }
 </script>
 </body>
