@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Multi-Audio Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; }
+  .wrap { max-width: 800px; margin: 0 auto; }
+  .header { border-bottom: 1px solid #111827; padding-bottom: 14px; margin-bottom: 20px; }
+  .label { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
+  input[type=password], input[type=number] { background: #0d1520; border: 1px solid #111827; border-radius: 6px; padding: 8px 10px; color: #e2e8f0; font-family: inherit; font-size: 12px; outline: none; }
+  input[type=password] { width: 100%; }
+  .models { display: flex; gap: 6px; }
+  .model-btn { padding: 8px 12px; border-radius: 6px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; }
+  .model-btn.active { background: #1e3a8a; border-color: #3b82f6; color: #93c5fd; }
+  .dropzone { border: 1px dashed #111827; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; margin-bottom: 16px; transition: all 0.2s; }
+  .dropzone.loaded { border-color: #1d4ed8; background: #0a1628; color: #60a5fa; }
+  .dropzone.empty { color: #1f2937; }
+  .seg-row { display: flex; align-items: center; gap: 6px; background: #0d1520; border-radius: 6px; padding: 6px 10px; border: 1px solid #111827; margin-bottom: 4px; }
+  .seg-row input { width: 65px; background: #111827; border: none; border-radius: 4px; padding: 3px 6px; color: #e2e8f0; font-family: inherit; font-size: 11px; }
+  .btn-run { width: 100%; padding: 11px; border-radius: 8px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: 2px; transition: all 0.2s; margin-bottom: 16px; }
+  .btn-run:enabled { background: #1d4ed8; color: #fff; }
+  .btn-run:disabled { background: #111827; color: #374151; cursor: default; }
+  .btn-add { background: none; border: 1px dashed #111827; border-radius: 6px; padding: 5px 12px; color: #374151; cursor: pointer; font-family: inherit; font-size: 11px; margin-top: 4px; margin-bottom: 14px; }
+  .btn-del { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; padding: 0 4px; margin-left: auto; }
+  .btn-del:disabled { color: #1f2937; cursor: default; }
+  .verdict { padding: 12px 14px; border-radius: 8px; border: 1px solid; margin-bottom: 14px; }
+  .verdict.ok { background: #052e16; border-color: #166534; }
+  .verdict.warn { background: #422006; border-color: #92400e; }
+  .verdict.err { background: #1c0a0a; border-color: #7f1d1d; }
+  .verdict-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .verdict-text { display: flex; gap: 8px; margin-bottom: 3px; }
+  .log-box { background: #040810; border: 1px solid #0d1520; border-radius: 8px; padding: 10px 12px; max-height: 400px; overflow-y: auto; }
+  .log-line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
+  .grid2 { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 16px; align-items: end; }
+  .muted { color: #374151; font-size: 10px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="header">
+    <div style="font-size:10px;color:#3b82f6;letter-spacing:3px;text-transform:uppercase;margin-bottom:4px">UzTranscribe · Experiment</div>
+    <div style="font-size:18px;font-weight:700;color:#f1f5f9">Multi-Audio API Test</div>
+    <div style="color:#4b5563;font-size:11px;margin-top:3px">Видит ли Gemini N отдельных WAV-файлов в одном запросе?</div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="label">API KEY</div>
+      <input type="password" id="apiKey" placeholder="AIzaSy..." />
+    </div>
+    <div>
+      <div class="label">МОДЕЛЬ</div>
+      <div class="models" id="modelBtns"></div>
+    </div>
+  </div>
+
+  <div class="dropzone empty" id="dropzone" onclick="document.getElementById('fileInput').click()">
+    ⊕ Загрузить аудио (drag & drop или клик)
+  </div>
+  <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none">
+
+  <div id="segEditor" style="display:none;margin-bottom:4px">
+    <div class="label" style="margin-bottom:8px">СЕГМЕНТЫ</div>
+    <div id="segList"></div>
+    <button class="btn-add" onclick="addSeg()">+ добавить сегмент</button>
+  </div>
+
+  <button class="btn-run" id="runBtn" onclick="runTest()" disabled>▶ ЗАПУСТИТЬ ТЕСТ</button>
+
+  <div id="verdict" style="display:none" class="verdict"></div>
+
+  <div id="logWrap" style="display:none">
+    <div class="label" style="margin-bottom:6px">ЛОГ</div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+</div>
+
+<script>
+const MODELS = [
+  { id: 'gemini-2.5-flash',                      label: '2.5 Flash' },
+  { id: 'gemini-2.5-flash-lite-preview-06-17',   label: '2.5 Flash Lite' },
+  { id: 'gemini-2.0-flash',                       label: '2.0 Flash' },
+]
+const LOG_COLORS = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#60a5fa', dim:'#374151', result:'#e2e8f0' }
+
+let currentModel = MODELS[0].id
+let audioBuf = null
+let duration = 0
+let segments = []
+let running = false
+
+// ── Model buttons ─────────────────────────────────────────────────────────
+const btnWrap = document.getElementById('modelBtns')
+MODELS.forEach(m => {
+  const b = document.createElement('button')
+  b.className = 'model-btn' + (m.id === currentModel ? ' active' : '')
+  b.textContent = m.label
+  b.onclick = () => {
+    currentModel = m.id
+    document.querySelectorAll('.model-btn').forEach(x => x.classList.remove('active'))
+    b.classList.add('active')
+  }
+  btnWrap.appendChild(b)
+})
+
+// ── Drag & drop ───────────────────────────────────────────────────────────
+const dz = document.getElementById('dropzone')
+dz.addEventListener('dragover', e => e.preventDefault())
+dz.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) loadFile(f) })
+document.getElementById('fileInput').addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]) })
+
+// ── Load & decode file ────────────────────────────────────────────────────
+async function loadFile(f) {
+  dz.className = 'dropzone'
+  dz.textContent = '⏳ Декодирую...'
+  try {
+    const ab = await f.arrayBuffer()
+    const ctx = new OfflineAudioContext(1, 1, 44100)
+    audioBuf = await ctx.decodeAudioData(ab)
+    duration = audioBuf.duration
+    const t = duration / 3
+    segments = [
+      { start: 0,            end: +t.toFixed(1) },
+      { start: +t.toFixed(1), end: +(t*2).toFixed(1) },
+      { start: +(t*2).toFixed(1), end: +duration.toFixed(1) },
+    ]
+    dz.className = 'dropzone loaded'
+    dz.textContent = `✓ ${f.name} · ${duration.toFixed(2)}s`
+    renderSegs()
+    document.getElementById('segEditor').style.display = 'block'
+    document.getElementById('runBtn').disabled = false
+  } catch(e) {
+    dz.className = 'dropzone empty'
+    dz.textContent = `✗ Ошибка: ${e.message}`
+  }
+}
+
+// ── Segment editor ────────────────────────────────────────────────────────
+function renderSegs() {
+  const list = document.getElementById('segList')
+  list.innerHTML = ''
+  segments.forEach((s, i) => {
+    const row = document.createElement('div')
+    row.className = 'seg-row'
+    row.innerHTML = `
+      <span style="color:#3b82f6;min-width:18px;font-size:11px">[${i+1}]</span>
+      <span style="color:#374151;font-size:10px">start</span>
+      <input type="number" value="${s.start}" step="0.1" min="0" max="${duration}" oninput="segments[${i}].start=+this.value;updateDur(${i})">
+      <span style="color:#374151;font-size:10px">end</span>
+      <input type="number" value="${s.end}" step="0.1" min="0" max="${duration}" oninput="segments[${i}].end=+this.value;updateDur(${i})">
+      <span id="dur${i}" style="color:#374151;font-size:10px;margin-left:4px">${(s.end-s.start).toFixed(1)}s</span>
+      <button class="btn-del" onclick="removeSeg(${i})" ${segments.length<=2?'disabled':''}>×</button>
+    `
+    list.appendChild(row)
+  })
+}
+function updateDur(i) {
+  const d = document.getElementById('dur'+i)
+  if(d) d.textContent = (segments[i].end - segments[i].start).toFixed(1) + 's'
+}
+function addSeg() {
+  const last = segments[segments.length-1]
+  segments.push({ start: last.end, end: Math.min(+(last.end+10).toFixed(1), duration) })
+  renderSegs()
+}
+function removeSeg(i) {
+  if(segments.length <= 2) return
+  segments.splice(i, 1)
+  renderSegs()
+}
+
+// ── Audio utils ───────────────────────────────────────────────────────────
+function sliceToWav(buf, startS, endS) {
+  const sr = buf.sampleRate
+  const s0 = Math.floor(startS * sr)
+  const s1 = Math.min(Math.ceil(endS * sr), buf.length)
+  const len = s1 - s0
+  const offline = new OfflineAudioContext(1, len, sr)
+  const mono = new AudioBuffer({ numberOfChannels:1, length:len, sampleRate:sr })
+  mono.getChannelData(0).set(buf.getChannelData(0).subarray(s0, s1))
+  const src = offline.createBufferSource()
+  src.buffer = mono; src.connect(offline.destination); src.start()
+  return offline.startRendering().then(rendered => {
+    const ch = rendered.getChannelData(0)
+    const ab = new ArrayBuffer(44 + ch.length*2)
+    const v = new DataView(ab)
+    const w = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)) }
+    w(0,'RIFF'); v.setUint32(4,36+ch.length*2,true); w(8,'WAVE'); w(12,'fmt ')
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true)
+    v.setUint32(24,sr,true); v.setUint32(28,sr*2,true)
+    v.setUint16(32,2,true); v.setUint16(34,16,true)
+    w(36,'data'); v.setUint32(40,ch.length*2,true)
+    for(let i=0;i<ch.length;i++)
+      v.setInt16(44+i*2,Math.max(-32768,Math.min(32767,ch[i]*32767)),true)
+    return new Blob([ab],{type:'audio/wav'})
+  })
+}
+
+function blobToB64(blob) {
+  return new Promise((res,rej) => {
+    const r = new FileReader()
+    r.onload = () => res(r.result.split(',')[1])
+    r.onerror = rej
+    r.readAsDataURL(blob)
+  })
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────
+function push(msg, type='info') {
+  const box = document.getElementById('logBox')
+  const line = document.createElement('div')
+  line.className = 'log-line'
+  line.style.color = LOG_COLORS[type] || LOG_COLORS.info
+  line.style.fontSize = type==='dim' ? '10px' : '11px'
+  line.textContent = msg
+  box.appendChild(line)
+  box.scrollTop = box.scrollHeight
+}
+
+// ── Main test ─────────────────────────────────────────────────────────────
+async function runTest() {
+  const apiKey = document.getElementById('apiKey').value.trim()
+  if(!apiKey || !audioBuf || running) return
+  running = true
+
+  document.getElementById('runBtn').disabled = true
+  document.getElementById('runBtn').textContent = '⏳ ЗАПРОС ОТПРАВЛЕН...'
+  document.getElementById('logBox').innerHTML = ''
+  document.getElementById('logWrap').style.display = 'block'
+  document.getElementById('verdict').style.display = 'none'
+
+  const t0 = performance.now()
+
+  try {
+    push(`━━ ТЕСТ: Multi-audio в одном запросе ━━`, 'head')
+    push(`Модель: ${currentModel}`)
+    push(`Нарезаю ${segments.length} сегментов...`)
+
+    const wavBlobs = []
+    for(let i=0; i<segments.length; i++) {
+      const s = segments[i]
+      const blob = await sliceToWav(audioBuf, s.start, s.end)
+      push(`  [${i+1}] ${s.start.toFixed(1)}s–${s.end.toFixed(1)}s · ${(s.end-s.start).toFixed(1)}s · ${(blob.size/1024).toFixed(0)}KB`)
+      wavBlobs.push(blob)
+    }
+    push(`✓ Нарезка готова`, 'ok')
+
+    push(`Конвертирую в base64...`)
+    const b64arr = await Promise.all(wavBlobs.map(blobToB64))
+    push(`✓ base64: ${b64arr.map(b=>((b.length*0.75)/1024).toFixed(0)+'KB').join(' | ')}`, 'ok')
+
+    const audioParts = b64arr.map(b64 => ({
+      inline_data: { mime_type:'audio/wav', data:b64 }
+    }))
+
+    const prompt =
+      `You have received ${segments.length} separate audio files above, numbered in order.\n` +
+      `Each file is an Uzbek speech segment:\n` +
+      segments.map((s,i) => `  Audio ${i+1}: ${s.start.toFixed(1)}s – ${s.end.toFixed(1)}s`).join('\n') + '\n\n' +
+      `Transcribe each audio file SEPARATELY.\n` +
+      `Return ONLY a raw JSON array of EXACTLY ${segments.length} strings.\n` +
+      `One string per audio file, in order. No timestamps, no explanation.\n` +
+      `Example: ${JSON.stringify(Array(segments.length).fill('...'))}`
+
+    push(``)
+    push(`─── ПРОМТ ───────────────────────────────`, 'dim')
+    push(prompt, 'dim')
+    push(`─────────────────────────────────────────`, 'dim')
+    push(``)
+
+    push(`Отправляю → ${currentModel}...`)
+    const apiT0 = performance.now()
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
+      {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          contents:[{ parts:[...audioParts,{text:prompt}] }],
+          generationConfig:{ temperature:0, maxOutputTokens:2048 }
+        })
+      }
+    )
+    const apiMs = Math.round(performance.now()-apiT0)
+    push(`HTTP ${resp.status} · ${apiMs}ms`, resp.ok?'ok':'err')
+
+    const raw = await resp.json()
+    push(``)
+    push(`─── RAW RESPONSE ────────────────────────`, 'dim')
+    push(JSON.stringify(raw, null, 2), 'dim')
+    push(`─────────────────────────────────────────`, 'dim')
+    push(``)
+
+    if(!resp.ok) {
+      const errMsg = raw?.error?.message || JSON.stringify(raw)
+      push(`✗ API ошибка: ${errMsg}`, 'err')
+      showVerdict(false, null, null, errMsg)
+      return
+    }
+
+    const text = (raw.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+    push(`─── ТЕКСТ ОТВЕТА ────────────────────────`, 'dim')
+    push(text, 'dim')
+    push(`─────────────────────────────────────────`, 'dim')
+    push(``)
+
+    let parsed = null
+    try {
+      let s = text
+      if(s.includes('```')){ s=s.split('```')[1]; if(s.startsWith('json')) s=s.slice(4) }
+      parsed = JSON.parse(s.trim())
+    } catch(_) {
+      const m = text.match(/\[[\s\S]*\]/)
+      if(m) try { parsed=JSON.parse(m[0]) } catch(_) {}
+    }
+
+    if(parsed && Array.isArray(parsed)) {
+      const match = parsed.length === segments.length
+      push(`✓ Распарсено: ${parsed.length} строк (ожидалось ${segments.length})`, match?'ok':'warn')
+      parsed.forEach((t,i) => push(`  [${i+1}] "${t}"`, 'result'))
+      showVerdict(true, parsed, segments.length, null, Math.round(performance.now()-t0))
+    } else {
+      push(`✗ Не удалось распарсить JSON`, 'err')
+      showVerdict(false, null, null, 'JSON parse failed')
+    }
+
+  } catch(e) {
+    push(`✗ Исключение: ${e.message}`, 'err')
+    showVerdict(false, null, null, e.message)
+  } finally {
+    running = false
+    document.getElementById('runBtn').disabled = false
+    document.getElementById('runBtn').textContent = '▶ ЗАПУСТИТЬ ТЕСТ СНОВА'
+  }
+}
+
+function showVerdict(success, texts, expected, error, ms) {
+  const el = document.getElementById('verdict')
+  el.style.display = 'block'
+  const match = success && texts && texts.length === expected
+  el.className = 'verdict ' + (match?'ok':success?'warn':'err')
+  const titleColor = match?'#4ade80':success?'#fbbf24':'#f87171'
+  const title = match
+    ? `✅ РАБОТАЕТ — Gemini вернул ${texts.length}/${expected} сегментов`
+    : success
+    ? `⚠️ ЧАСТИЧНО — ожидалось ${expected}, получено ${texts?.length}`
+    : `❌ ОШИБКА — ${error}`
+  let html = `<div class="verdict-title" style="color:${titleColor}">${title}</div>`
+  if(texts) texts.forEach((t,i) => {
+    html += `<div class="verdict-text"><span style="color:#3b82f6;min-width:20px;font-size:11px">[${i+1}]</span><span style="color:#cbd5e1;font-size:12px">${t||'<em style="color:#374151">(пусто)</em>'}</span></div>`
+  })
+  if(ms) html += `<div class="muted">Итого: ${ms}ms</div>`
+  el.innerHTML = html
+}
+</script>
+</body>
+</html>
