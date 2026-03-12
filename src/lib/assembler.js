@@ -143,25 +143,28 @@ function rmsSubCut(audioBuf, seg, targetDur, maxChars) {
 
   if (cutTimes.length === 0) return [seg]
 
-  // 4. Разрезаем: определяем длительности частей и делим текст пропорционально
+  // 4. Разрезаем: делим текст по СЛОВАМ пропорционально длительности частей
   const boundaries = [seg.start, ...cutTimes, seg.end]
-  const parts  = []
-  const text   = seg.text.trim()
-  const totalChars = text.length
+  const words = seg.text.trim().split(/\s+/)
+  const nWords = words.length
+  const parts = []
 
-  let charOffset = 0
+  let wordOffset = 0
   for (let pi = 0; pi < boundaries.length - 1; pi++) {
     const partStart = boundaries[pi]
     const partEnd   = boundaries[pi + 1]
     const partDur   = partEnd - partStart
-    // Пропорция символов = пропорция длительности
-    const partChars = pi === boundaries.length - 2
-      ? totalChars - charOffset  // последняя часть — всё оставшееся
-      : Math.round(totalChars * (partDur / dur))
+    const isLast    = pi === boundaries.length - 2
 
-    const partText = text.slice(charOffset, charOffset + partChars).trim()
-    charOffset += partChars
+    // Кол-во слов для этой части = пропорция длительности × всего слов
+    const partWords = isLast
+      ? nWords - wordOffset  // последняя часть — все оставшиеся слова
+      : Math.max(1, Math.round(nWords * (partDur / dur)))
 
+    const slice = words.slice(wordOffset, wordOffset + partWords)
+    wordOffset += partWords
+
+    const partText = slice.join(' ')
     if (partText) {
       parts.push({
         start: partStart,
