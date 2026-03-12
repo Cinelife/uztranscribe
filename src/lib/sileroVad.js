@@ -1,5 +1,5 @@
 /**
- * sileroVad.js — v13.0.0 REFACTOR
+ * sileroVad.js — v13.1.0
  *
  * Изменения vs v12.5.4:
  *   - Принимает audioBuf (AudioBuffer) напрямую — нет двойного декодирования
@@ -244,20 +244,7 @@ function mergeSegments(rawSegs, minPause, maxSegMs, samples16k) {
     result.push(...parts)
   }
 
-  // Финальный проход: склеить крошечные сегменты (<MIN_PART_MS) с соседом
-  // Возникают если splitOversizedSeg или VAD создали слишком короткие части
-  const cleaned = []
-  for (let i = 0; i < result.length; i++) {
-    const seg = result[i]
-    const dur = seg.end - seg.start
-    if (dur < MIN_PART_MS && cleaned.length > 0) {
-      // Склеиваем с предыдущим
-      cleaned[cleaned.length - 1].end = seg.end
-    } else {
-      cleaned.push({ start: seg.start, end: seg.end })
-    }
-  }
-  return cleaned
+  return result
 }
 
 // ── groupIntoChunks ───────────────────────────────────────────────────────────
@@ -331,7 +318,7 @@ export async function segmentAudioSilero(
   audioBufCached = null
 ) {
   if (chunkSec  === undefined) chunkSec  = 25
-  if (minPause  === undefined) minPause  = 300  // v13: снижено с 500 до 300мс
+  if (minPause  === undefined) minPause  = 500  // v13.1: восстановлен 500мс — предотвращает VAD-границы внутри слов
 
   const maxSegMs = chunkSec * 1000  // максимальный сегмент в мс
 

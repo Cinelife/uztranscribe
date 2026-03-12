@@ -1,34 +1,21 @@
 /**
- * assembler.js — v13.0.0
+ * assembler.js — v13.1.0  "last hope" clean build
  *
- * Изменения vs v12.5.4:
+ * Принцип: минимум кода, максимум предсказуемости.
+ * Убрано всё экспериментальное: rmsSubCut, micro-merge, MIN_PART_DUR.
+ * Оставлено только то, что доказанно работает:
+ *   - Dedup → Merge → hardSplitByWords (правильный порядок)
+ *   - БАГ #2 исправлен: mixed-сегменты не пропускаются
+ *   - Разбивка по словам, НЕ по символам
  *
- * НОВОЕ — rmsSubCut():
- *   Заменяет useRmsTiming/useFFT/expandSegment для длинных VAD-сегментов.
- *   Находит реальные RMS-минимумы (паузы) внутри сегмента и режет там.
- *   Текст делится пропорционально длительности получившихся частей.
- *   Старый подход делил слова по энергии → MAE 1.23с (хуже чем без него 0.53с).
- *   Новый подход ищет РЕАЛЬНЫЕ паузы → ожидается MAE < 0.53с.
+ * Почему "by words" важно:
+ *   hardSplitByChars в предыдущих версиях уже делал word-split,
+ *   но функция переименована и задокументирована явно чтобы
+ *   исключить любые сомнения и будущий регресс.
  *
- * ПАРАМЕТР targetDur (новый, из UI):
- *   Целевая длина субтитра в секундах (1.0 / 1.5 / 2.0 / 2.5 / 3.0).
- *   Сегмент длиннее targetDur × 1.4 → кандидат на разрезку.
- *   Дефолт: 1.5с (близко к manual avg=1.49с).
- *
- * УБРАНО:
- *   - useRmsTiming (доказано вредит по тестам)
- *   - useFFT / ZCR-weighted timing (то же)
- *   - expandSegment() — заменён rmsSubCut()
- *   - rmsIntegralBoundaries() / zcrIntegralBoundaries() — убраны
- *
- * ИСПРАВЛЕНО:
- *   - БАГ #2 (v12.5.4): mixed-сегменты НЕ пропускаются при showMusicMarker=false
- *     mixed = речь поверх музыки → выводится как обычный субтитр
- *
- * СОХРАНЕНО:
- *   - subTiming='words' legacy path (для Vosk/Smart Silence)
- *   - Dedup, mergeStrict/Balanced/Sentence
- *   - factorMap принимается но пока не используется (зарезервировано для P4)
+ * Корень проблемы "tack dasturlash" / "sqacha tarkibi":
+ *   Это НЕ assembler — это VAD-граница разрезающая слово в аудио.
+ *   Фиксится в sileroVad.js: minPause 300мс → 500мс.
  */
 
 import { buildSrt } from './srtUtils.js'
@@ -41,182 +28,81 @@ function norm(t) {
 // ── ♪ маркер парсер ───────────────────────────────────────────────────────────
 function parseMarker(raw) {
   const t = (raw || '').trim()
-  if (!t)                                              return { type: 'silent', text: '' }
-  if (t === '♪')                                       return { type: 'music',  text: '♪' }
-  if (t.startsWith('♪') && t.endsWith('♪') && t.length > 1) return { type: 'mixed', text: t }
+  if (!t)                                                        return { type: 'silent', text: '' }
+  if (t === '♪')                                                 return { type: 'music',  text: '♪' }
+  if (t.startsWith('♪') && t.endsWith('♪') && t.length > 1)    return { type: 'mixed',  text: t }
   if (t.startsWith('♪ ') || t.endsWith(' ♪') || t.endsWith('♪')) return { type: 'mixed', text: t }
   return { type: 'speech', text: t }
 }
 
-// ── RMS sub-cut — главная новая функция ──────────────────────────────────────
+// ── Hard split по maxChars — по СЛОВАМ, не по символам ───────────────────────
 /**
- * Разрезает длинный VAD-сегмент по реальным RMS-минимумам (паузам).
+ * Делит сегмент на строки ≤ maxChars, разрезая только по границам слов.
+ * Время делится пропорционально количеству слов в каждой части.
  *
- * Алгоритм:
- *   1. Вычисляем RMS в 20мс фреймах по всей длине сегмента
- *   2. Определяем сколько разрезов нужно: nCuts = floor(dur / targetDur) - 1
- *   3. Для каждого разреза i: идеальное время = start + (i+1) * targetDur
- *      Окно поиска: ±40% targetDur вокруг идеального времени
- *      Берём фрейм с минимальным RMS в этом окне → реальная пауза
- *   4. Делим текст пропорционально длительности каждой части (по символам)
- *
- * @param {AudioBuffer} audioBuf
- * @param {{start, end, text, type}} seg
- * @param {number} targetDur  — целевая длина субтитра (секунды)
- * @param {number} maxChars   — макс. символов на строку
- * @returns {Array<{start, end, text, type}>}
+ * Важно: никогда не разрезает слово посередине.
+ * "full-stack dasturlash" при maxChars=15 → "full-stack" + "dasturlash"
+ * НЕ → "full-stack das" + "turlash"
  */
-function rmsSubCut(audioBuf, seg, targetDur, maxChars) {
-  const dur = seg.end - seg.start
-  // Не режем если: короткий, мало текста, нет буфера
-  if (!audioBuf || dur <= targetDur * 1.4 || seg.text.trim().split(/\s+/).length < 4) {
-    return [seg]
-  }
-
-  const sr     = audioBuf.sampleRate
-  const nc     = audioBuf.numberOfChannels
-  const s0     = Math.max(0, Math.floor(seg.start * sr))
-  const s1     = Math.min(audioBuf.length, Math.ceil(seg.end * sr))
-  const len    = s1 - s0
-  const FRAME  = Math.max(1, Math.floor(sr * 0.02)) // 20мс фреймы
-  const nFrames = Math.ceil(len / FRAME)
-
-  if (nFrames < 4) return [seg]
-
-  // 1. Вычисляем RMS по фреймам
-  const rms = new Float32Array(nFrames)
-  for (let f = 0; f < nFrames; f++) {
-    let sum = 0, cnt = 0
-    for (let c = 0; c < nc; c++) {
-      const ch = audioBuf.getChannelData(c)
-      for (let i = f * FRAME; i < Math.min((f + 1) * FRAME, len); i++) {
-        sum += ch[s0 + i] * ch[s0 + i]; cnt++
-      }
-    }
-    rms[f] = cnt > 0 ? Math.sqrt(sum / cnt) : 0
-  }
-
-  // Лёгкое сглаживание (3-фрейм скользящее среднее) — убирает артефакты
-  const smoothed = new Float32Array(nFrames)
-  for (let f = 0; f < nFrames; f++) {
-    const lo = Math.max(0, f - 1), hi = Math.min(nFrames - 1, f + 1)
-    let s = 0, cnt = 0
-    for (let k = lo; k <= hi; k++) { s += rms[k]; cnt++ }
-    smoothed[f] = s / cnt
-  }
-
-  // 2. Сколько разрезов нужно
-  const nCuts = Math.max(1, Math.floor(dur / targetDur) - 1)
-
-  // Минимальный зазор между разрезами (40% targetDur в фреймах)
-  const minGapFrames = Math.floor(targetDur * 0.4 * sr / FRAME)
-
-  // 3. Ищем минимальный RMS в окне вокруг каждого идеального времени
-  const MIN_PART_DUR = 0.8  // сек — не создавать части короче этого
-
-  const cutTimes = []
-  const searchHalf = Math.floor(targetDur * 0.4 * sr / FRAME) // ±40%
-
-  for (let ci = 1; ci <= nCuts; ci++) {
-    const idealSec   = seg.start + ci * (dur / (nCuts + 1))
-    const idealFrame = Math.floor((idealSec - seg.start) * sr / FRAME)
-    const loF = Math.max(1, idealFrame - searchHalf)
-    const hiF = Math.min(nFrames - 2, idealFrame + searchHalf)
-
-    let bestFrame = idealFrame, bestRms = Infinity
-    for (let f = loF; f <= hiF; f++) {
-      const prevCutFrame = cutTimes.length > 0
-        ? Math.floor((cutTimes[cutTimes.length - 1] - seg.start) * sr / FRAME)
-        : 0
-      if (f - prevCutFrame < minGapFrames) continue
-      if (smoothed[f] < bestRms) { bestRms = smoothed[f]; bestFrame = f }
-    }
-    const cutTime = seg.start + bestFrame * FRAME / sr
-
-    // Не добавляем если часть до или после была бы < MIN_PART_DUR
-    const prevBoundary = cutTimes.length > 0 ? cutTimes[cutTimes.length - 1] : seg.start
-    if (cutTime - prevBoundary < MIN_PART_DUR) continue
-    if (seg.end - cutTime < MIN_PART_DUR) continue
-    if (cutTime > seg.start + MIN_PART_DUR && cutTime < seg.end - MIN_PART_DUR) {
-      cutTimes.push(cutTime)
-    }
-  }
-
-  if (cutTimes.length === 0) return [seg]
-
-  // 4. Разрезаем: делим текст по СЛОВАМ пропорционально длительности частей
-  const boundaries = [seg.start, ...cutTimes, seg.end]
-  const words = seg.text.trim().split(/\s+/)
-  const nWords = words.length
-  const parts = []
-
-  let wordOffset = 0
-  for (let pi = 0; pi < boundaries.length - 1; pi++) {
-    const partStart = boundaries[pi]
-    const partEnd   = boundaries[pi + 1]
-    const partDur   = partEnd - partStart
-    const isLast    = pi === boundaries.length - 2
-
-    // Кол-во слов для этой части = пропорция длительности × всего слов
-    const partWords = isLast
-      ? nWords - wordOffset  // последняя часть — все оставшиеся слова
-      : Math.max(1, Math.round(nWords * (partDur / dur)))
-
-    const slice = words.slice(wordOffset, wordOffset + partWords)
-    wordOffset += partWords
-
-    const partText = slice.join(' ')
-    if (partText) {
-      parts.push({
-        start: partStart,
-        end:   partEnd,
-        text:  partText,
-        type:  seg.type,
-      })
-    }
-  }
-
-  return parts.length > 0 ? parts : [seg]
-}
-
-// ── Hard split по maxChars (финальный проход) ─────────────────────────────────
-function hardSplitByChars(seg, maxChars) {
+function hardSplitByWords(seg, maxChars) {
   if (seg.text.length <= maxChars) return [seg]
-  const words = seg.text.split(' ')
-  const dur   = seg.end - seg.start
-  const wDur  = dur / words.length
+
+  const words = seg.text.trim().split(/\s+/)
+  if (words.length <= 1) return [seg]  // одно длинное слово — не разрезаем
+
+  const dur  = seg.end - seg.start
+  const wDur = dur / words.length  // время на слово (равномерно)
+
   const result = []
-  let line = '', lineStart = seg.start
+  let line = ''
+  let lineStart = seg.start
+  let lineWords = 0
+
   for (let wi = 0; wi < words.length; wi++) {
     const candidate = line ? line + ' ' + words[wi] : words[wi]
     if (candidate.length > maxChars && line) {
-      result.push({ start: lineStart, end: lineStart + wDur * line.split(' ').length, text: line, type: seg.type })
-      lineStart += wDur * line.split(' ').length
-      line = words[wi]
+      // Фиксируем текущую строку
+      result.push({
+        start: lineStart,
+        end:   lineStart + wDur * lineWords,
+        text:  line,
+        type:  seg.type,
+      })
+      lineStart += wDur * lineWords
+      lineWords  = 1
+      line       = words[wi]
     } else {
       line = candidate
+      lineWords++
     }
   }
-  if (line) result.push({ start: lineStart, end: seg.end, text: line, type: seg.type })
+
+  // Последняя строка — до конца сегмента
+  if (line) {
+    result.push({ start: lineStart, end: seg.end, text: line, type: seg.type })
+  }
+
   return result
 }
 
-// ── Legacy: expandSegment для subTiming='words' (Vosk/Smart Silence) ─────────
+// ── Legacy path: expandSegmentWords (subTiming='words', Vosk/Smart Silence) ───
 function expandSegmentWords(seg, maxChars) {
   const words = seg.text.trim().split(/\s+/)
-  const n     = words.length
-  const dur   = seg.end - seg.start
-  const wDur  = dur / n
+  const n    = words.length
+  const dur  = seg.end - seg.start
+  const wDur = dur / n
   const result = []
-  let line = '', lineStart = seg.start
+  let line = '', lineStart = seg.start, lineWords = 0
   for (let wi = 0; wi < n; wi++) {
     const candidate = line ? line + ' ' + words[wi] : words[wi]
     if (candidate.length > maxChars && line) {
-      result.push({ start: lineStart, end: lineStart + wDur * line.split(' ').length, text: line, type: seg.type })
-      lineStart += wDur * line.split(' ').length
+      result.push({ start: lineStart, end: lineStart + wDur * lineWords, text: line, type: seg.type })
+      lineStart += wDur * lineWords
+      lineWords = 1
       line = words[wi]
     } else {
       line = candidate
+      lineWords++
     }
   }
   if (line) result.push({ start: lineStart, end: seg.end, text: line, type: seg.type })
@@ -265,10 +151,10 @@ function mergeSentence(segs, maxChars, mergeGap) {
     } else { out.push(cur); cur = { ...next } }
   }
   out.push(cur)
+  // Финальный hard split для переросших строк
   const final = []
   for (const seg of out) {
-    if (seg.text.length <= maxChars) { final.push(seg); continue }
-    final.push(...hardSplitByChars(seg, maxChars))
+    final.push(...hardSplitByWords(seg, maxChars))
   }
   return final
 }
@@ -282,10 +168,10 @@ function mergeSentence(segs, maxChars, mergeGap) {
  * @param mergeMode       'strict'|'balanced'|'sentence'
  * @param dedupWindow     0=выкл, 1–20=скользящее окно
  * @param subTiming       'vad'|'words' (words — legacy Vosk/Smart Silence)
- * @param audioBuf        AudioBuffer для RMS sub-cut (null = пропустить)
- * @param targetDur       v13: целевая длина субтитра (сек), из UI
+ * @param audioBuf        (зарезервировано, не используется в v13.1)
+ * @param targetDur       (зарезервировано, не используется в v13.1)
  * @param showMusicMarker включить ♪ в SRT
- * @param factorMap       зарезервировано (будущий P4)
+ * @param factorMap       (зарезервировано)
  */
 export function assemble(
   flagMap,
@@ -295,10 +181,10 @@ export function assemble(
   mergeMode       = 'strict',
   dedupWindow     = 0,
   subTiming       = 'vad',
-  audioBuf        = null,
-  targetDur       = 1.5,   // v13: новый параметр
+  audioBuf        = null,   // зарезервировано
+  targetDur       = 1.5,    // зарезервировано
   showMusicMarker = false,
-  factorMap       = null   // зарезервировано
+  factorMap       = null    // зарезервировано
 ) {
   // ── Collect + parse ♪ markers ──────────────────────────────────────────────
   const allSegs = []
@@ -315,9 +201,7 @@ export function assemble(
       continue
     }
 
-    // v13 БАГ #2 ИСПРАВЛЕН: mixed НЕ пропускается — это речь поверх музыки
-    // Было: if (!showMusicMarker && (seg.type === 'music' || seg.type === 'mixed')) continue
-    // Теперь: mixed всегда добавляется как обычный субтитр
+    // БАГ #2 ИСПРАВЛЕН: mixed НЕ пропускается — это речь поверх музыки
     allSegs.push({ start: times.start, end: times.end, text: parsed.text, type: parsed.type })
   }
 
@@ -338,7 +222,11 @@ export function assemble(
     return buildSrt(expanded)
   }
 
-  // ── Dedup ──────────────────────────────────────────────────────────────────
+  // ── VAD path: Dedup → Merge → hardSplitByWords ────────────────────────────
+  // Порядок важен: Merge должен быть ДО hardSplitByWords
+  // чтобы итоговые части не склеивались обратно.
+
+  // ── 1. Dedup ───────────────────────────────────────────────────────────────
   let deduped
   if (dedupWindow === 0) {
     deduped = allSegs
@@ -363,7 +251,7 @@ export function assemble(
     }
   }
 
-  // ── Merge ──────────────────────────────────────────────────────────────────
+  // ── 2. Merge ───────────────────────────────────────────────────────────────
   const speechSegs = deduped.filter(s => s.type !== 'music')
   const musicSegs  = deduped.filter(s => s.type === 'music')
 
@@ -372,65 +260,23 @@ export function assemble(
     merged = musicSegs
   } else {
     let mergedSpeech
-    if (mergeMode === 'balanced')  mergedSpeech = mergeBalanced(speechSegs, maxChars, mergeGap)
-    else if (mergeMode === 'sentence') mergedSpeech = mergeSentence(speechSegs, maxChars, mergeGap)
-    else                           mergedSpeech = mergeStrict(speechSegs, maxChars, mergeGap)
+    if (mergeMode === 'balanced')       mergedSpeech = mergeBalanced(speechSegs, maxChars, mergeGap)
+    else if (mergeMode === 'sentence')  mergedSpeech = mergeSentence(speechSegs, maxChars, mergeGap)
+    else                                mergedSpeech = mergeStrict(speechSegs, maxChars, mergeGap)
 
     merged = [...mergedSpeech, ...musicSegs].sort((a, b) => a.start - b.start)
   }
 
-  // ── v13: RMS sub-cut — ПОСЛЕ merge ────────────────────────────────────────
-  // Причина: rmsSubCut создаёт части с gap=0; если до merge — mergeStrict
-  // склеит их обратно (gap=0 < mergeGap=0.5с). Режем уже смерженные длинные.
-  let postCut = merged
-  if (audioBuf) {
-    const expanded = []
-    for (const seg of merged) {
-      if (seg.type === 'music') { expanded.push(seg); continue }
-      expanded.push(...rmsSubCut(audioBuf, seg, targetDur, maxChars))
-    }
-    postCut = expanded
+  // ── 3. Clamp overlaps ──────────────────────────────────────────────────────
+  for (let i = 0; i < merged.length - 1; i++) {
+    if (merged[i].end > merged[i + 1].start - 0.05)
+      merged[i].end = Math.max(merged[i].start + 0.1, merged[i + 1].start - 0.05)
   }
 
-  // ── Micro-merge: склеить слишком короткие/однословные сегменты с соседом ───
-  // Причина: VAD или rmsSubCut может создать части <0.7с или 1 слово
-  // Склеиваем с ПРАВЫМ соседом (предпочтительно) или левым
-  const microMerged = []
-  for (let i = 0; i < postCut.length; i++) {
-    const seg  = postCut[i]
-    const dur  = seg.end - seg.start
-    const wc   = seg.text.trim().split(/\s+/).length
-    const tiny = (dur < 0.7 || wc < 2) && seg.type !== 'music'
-
-    if (tiny && i < postCut.length - 1 && postCut[i + 1].type !== 'music') {
-      // Склеиваем с правым соседом
-      postCut[i + 1] = {
-        start: seg.start,
-        end:   postCut[i + 1].end,
-        text:  seg.text + ' ' + postCut[i + 1].text,
-        type:  postCut[i + 1].type,
-      }
-    } else if (tiny && microMerged.length > 0 && microMerged[microMerged.length - 1].type !== 'music') {
-      // Fallback: склеиваем с левым
-      const prev = microMerged[microMerged.length - 1]
-      prev.end  = seg.end
-      prev.text = prev.text + ' ' + seg.text
-    } else {
-      microMerged.push({ ...seg })
-    }
-  }
-  postCut = microMerged
-
-  // ── Clamp overlaps ─────────────────────────────────────────────────────────
-  for (let i = 0; i < postCut.length - 1; i++) {
-    if (postCut[i].end > postCut[i + 1].start - 0.05)
-      postCut[i].end = Math.max(postCut[i].start + 0.1, postCut[i + 1].start - 0.05)
-  }
-
-  // ── Hard split по maxChars ─────────────────────────────────────────────────
+  // ── 4. Hard split по maxChars — только по границам слов ───────────────────
   const final = []
-  for (const seg of postCut) {
-    final.push(...hardSplitByChars(seg, maxChars))
+  for (const seg of merged) {
+    final.push(...hardSplitByWords(seg, maxChars))
   }
 
   return buildSrt(final)
