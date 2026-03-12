@@ -22,18 +22,16 @@ export default function App() {
   const [minPause,    setMinPause]    = useState(200)
   const [mergeGap,    setMergeGap]    = useState(0.5)
   const [mergeMode,   setMergeMode]   = useState('strict')
-  const [dedupWindow, setDedupWindow] = useState(12)
+  const [dedupWindow, setDedupWindow] = useState(0)
   const [subTiming,   setSubTiming]   = useState('vad')
   const [timingMode,  setTimingMode]  = useState('smart')
   const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
   const [gmModel,     setGmModel]     = useState(GM_MODELS[0].id)
-  const [concurrency, setConcurrency] = useState(8)
+  const [concurrency, setConcurrency] = useState(6)
 
-  // v12.5.4 — экспериментальные настройки
-  const [classifierMode,   setClassifierMode]   = useState('off')   // 'off'|'hint'|'full'
-  const [showMusicMarker,  setShowMusicMarker]  = useState(false)
-  const [useRmsTiming,     setUseRmsTiming]     = useState(false)
-  const [useFFT,           setUseFFT]           = useState(false)
+  // v13
+  const [showMusicMarker, setShowMusicMarker] = useState(false)
+  const [targetDur,       setTargetDur]       = useState(1.5)
 
   const [files,        setFiles]        = useState([])
   const [fileStatuses, setFileStatuses] = useState({})
@@ -63,11 +61,8 @@ export default function App() {
     elKey, gmKey, orKey, orModel, gmModel,
     voskReady, voskModelRef,
     concurrency,
-    // v12.5.4
-    classifierMode,
     showMusicMarker,
-    useRmsTiming,
-    useFFT,
+    targetDur,
   })
 
   return (
@@ -97,10 +92,8 @@ export default function App() {
         voskReady={voskReady} setVoskReady={setVoskReady}
         voskModelRef={voskModelRef}
         concurrency={concurrency} setConcurrency={setConcurrency}
-        classifierMode={classifierMode}   setClassifierMode={setClassifierMode}
         showMusicMarker={showMusicMarker} setShowMusicMarker={setShowMusicMarker}
-        useRmsTiming={useRmsTiming}       setUseRmsTiming={setUseRmsTiming}
-        useFFT={useFFT}                   setUseFFT={setUseFFT}
+        targetDur={targetDur}             setTargetDur={setTargetDur}
       />
 
       <FilesCard
