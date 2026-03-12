@@ -112,6 +112,8 @@ function rmsSubCut(audioBuf, seg, targetDur, maxChars) {
   const minGapFrames = Math.floor(targetDur * 0.4 * sr / FRAME)
 
   // 3. Ищем минимальный RMS в окне вокруг каждого идеального времени
+  const MIN_PART_DUR = 0.8  // сек — не создавать части короче этого
+
   const cutTimes = []
   const searchHalf = Math.floor(targetDur * 0.4 * sr / FRAME) // ±40%
 
@@ -123,20 +125,19 @@ function rmsSubCut(audioBuf, seg, targetDur, maxChars) {
 
     let bestFrame = idealFrame, bestRms = Infinity
     for (let f = loF; f <= hiF; f++) {
-      // Не ближе minGapFrames к предыдущему разрезу
       const prevCutFrame = cutTimes.length > 0
         ? Math.floor((cutTimes[cutTimes.length - 1] - seg.start) * sr / FRAME)
         : 0
       if (f - prevCutFrame < minGapFrames) continue
-
-      if (smoothed[f] < bestRms) {
-        bestRms = smoothed[f]
-        bestFrame = f
-      }
+      if (smoothed[f] < bestRms) { bestRms = smoothed[f]; bestFrame = f }
     }
     const cutTime = seg.start + bestFrame * FRAME / sr
-    // Не добавляем если слишком близко к началу или концу
-    if (cutTime > seg.start + 0.2 && cutTime < seg.end - 0.2) {
+
+    // Не добавляем если часть до или после была бы < MIN_PART_DUR
+    const prevBoundary = cutTimes.length > 0 ? cutTimes[cutTimes.length - 1] : seg.start
+    if (cutTime - prevBoundary < MIN_PART_DUR) continue
+    if (seg.end - cutTime < MIN_PART_DUR) continue
+    if (cutTime > seg.start + MIN_PART_DUR && cutTime < seg.end - MIN_PART_DUR) {
       cutTimes.push(cutTime)
     }
   }
@@ -390,6 +391,35 @@ export function assemble(
     }
     postCut = expanded
   }
+
+  // ── Micro-merge: склеить слишком короткие/однословные сегменты с соседом ───
+  // Причина: VAD или rmsSubCut может создать части <0.7с или 1 слово
+  // Склеиваем с ПРАВЫМ соседом (предпочтительно) или левым
+  const microMerged = []
+  for (let i = 0; i < postCut.length; i++) {
+    const seg  = postCut[i]
+    const dur  = seg.end - seg.start
+    const wc   = seg.text.trim().split(/\s+/).length
+    const tiny = (dur < 0.7 || wc < 2) && seg.type !== 'music'
+
+    if (tiny && i < postCut.length - 1 && postCut[i + 1].type !== 'music') {
+      // Склеиваем с правым соседом
+      postCut[i + 1] = {
+        start: seg.start,
+        end:   postCut[i + 1].end,
+        text:  seg.text + ' ' + postCut[i + 1].text,
+        type:  postCut[i + 1].type,
+      }
+    } else if (tiny && microMerged.length > 0 && microMerged[microMerged.length - 1].type !== 'music') {
+      // Fallback: склеиваем с левым
+      const prev = microMerged[microMerged.length - 1]
+      prev.end  = seg.end
+      prev.text = prev.text + ' ' + seg.text
+    } else {
+      microMerged.push({ ...seg })
+    }
+  }
+  postCut = microMerged
 
   // ── Clamp overlaps ─────────────────────────────────────────────────────────
   for (let i = 0; i < postCut.length - 1; i++) {

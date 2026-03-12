@@ -187,12 +187,20 @@ function findRmsSplitPoint(samples16k, startMs, endMs) {
 }
 
 // ── Разбить длинный сегмент на части ≤ maxMs ─────────────────────────────────
+const MIN_PART_MS = 800  // мс — минимальная длина части после разбиения
+
 function splitOversizedSeg(seg, maxMs, samples16k) {
   const dur = seg.end - seg.start
   if (dur <= maxMs) return [seg]
 
   // Рекурсивно делим пополам с привязкой к RMS-минимуму
   const splitMs = findRmsSplitPoint(samples16k, seg.start, seg.end)
+
+  // Не разрезаем если какая-либо из частей будет < MIN_PART_MS
+  const leftDur  = splitMs - seg.start
+  const rightDur = seg.end - splitMs
+  if (leftDur < MIN_PART_MS || rightDur < MIN_PART_MS) return [seg]
+
   const left    = { start: seg.start, end: splitMs }
   const right   = { start: splitMs,   end: seg.end  }
 
@@ -236,7 +244,20 @@ function mergeSegments(rawSegs, minPause, maxSegMs, samples16k) {
     result.push(...parts)
   }
 
-  return result
+  // Финальный проход: склеить крошечные сегменты (<MIN_PART_MS) с соседом
+  // Возникают если splitOversizedSeg или VAD создали слишком короткие части
+  const cleaned = []
+  for (let i = 0; i < result.length; i++) {
+    const seg = result[i]
+    const dur = seg.end - seg.start
+    if (dur < MIN_PART_MS && cleaned.length > 0) {
+      // Склеиваем с предыдущим
+      cleaned[cleaned.length - 1].end = seg.end
+    } else {
+      cleaned.push({ start: seg.start, end: seg.end })
+    }
+  }
+  return cleaned
 }
 
 // ── groupIntoChunks ───────────────────────────────────────────────────────────
