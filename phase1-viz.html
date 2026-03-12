@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UzTranscribe — Фаза 1: Визуализация сегментации</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #08080d; }
+  button:hover { opacity: 0.85; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const METHODS = ["smart", "v12", "silero", "vosk"];
+
+const METHOD_META = {
+  smart:  { label: "Smart Silence", icon: "⚡", color: "#f59e0b", bg: "#1c1508", border: "#7c4e00", desc: "Поиск тишины по RMS минимуму" },
+  v12:    { label: "v12 Flags",     icon: "🚩", color: "#60a5fa", bg: "#080e1c", border: "#1e3a6e", desc: "Адаптивный порог + дифференциал" },
+  silero: { label: "Silero VAD",    icon: "🧠", color: "#a78bfa", bg: "#0e0818", border: "#4c1d95", desc: "Нейросеть: вероятность речи per frame" },
+  vosk:   { label: "Vosk v11",      icon: "🗣", color: "#34d399", bg: "#031209", border: "#065f46", desc: "STT: распознаёт и даёт word timestamps" },
+};
+
+const SIGNAL = (() => {
+  const n = 120, out = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / n;
+    let v = 0;
+    if (t > 0.05 && t < 0.22) v = 0.4 + 0.5 * Math.sin((t - 0.05) * 60) * Math.abs(Math.sin(t * 23));
+    if (t > 0.30 && t < 0.75) v = 0.35 + 0.55 * Math.abs(Math.sin(t * 41 + 1)) * (0.7 + 0.3 * Math.sin(t * 13));
+    if (t > 0.82 && t < 0.95) v = 0.45 + 0.45 * Math.abs(Math.sin(t * 55));
+    v += 0.015 * (Math.random());
+    out.push(Math.max(0, Math.min(1, v)));
+  }
+  return out;
+})();
+
+const D_SIGNAL = SIGNAL.map((v, i) => i === 0 ? 0 : Math.abs(v - SIGNAL[i - 1]));
+
+const SEGMENTS = {
+  smart: [
+    { start: 0, end: 1, label: "Один чанк", color: "#f59e0b22", border: "#f59e0b" },
+  ],
+  v12: [
+    { start: 0.05, end: 0.22, label: "seg 1",  color: "#60a5fa22", border: "#60a5fa" },
+    { start: 0.30, end: 0.50, label: "seg 2a", color: "#60a5fa22", border: "#60a5fa" },
+    { start: 0.50, end: 0.75, label: "seg 2b", color: "#60a5fa33", border: "#60a5fa" },
+    { start: 0.82, end: 0.95, label: "seg 3",  color: "#60a5fa22", border: "#60a5fa" },
+  ],
+  silero: [
+    { start: 0.05, end: 0.22, label: "seg 1",         color: "#a78bfa22", border: "#a78bfa" },
+    { start: 0.30, end: 0.75, label: "seg 2 (91.6с!)", color: "#ef444433", border: "#ef4444", warn: true },
+    { start: 0.82, end: 0.95, label: "seg 3",         color: "#a78bfa22", border: "#a78bfa" },
+  ],
+  vosk: [
+    { start: 0.05, end: 0.10, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.11, end: 0.16, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.17, end: 0.22, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.31, end: 0.38, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.39, end: 0.46, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.47, end: 0.55, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.56, end: 0.63, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.64, end: 0.71, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.83, end: 0.88, label: "word", color: "#34d39922", border: "#34d399" },
+    { start: 0.89, end: 0.95, label: "word", color: "#34d39922", border: "#34d399" },
+  ],
+};
+
+const STEPS = {
+  smart: [
+    { label: "1. Декодируем аудио",               detail: "OfflineAudioContext → Float32Array" },
+    { label: "2. RMS по фреймам 50мс",            detail: "Ищем общий уровень энергии" },
+    { label: "3. Ищем минимум RMS ±10с от target",detail: "findSilentCut() — самое тихое место" },
+    { label: "4. Режем чанки по этой точке",      detail: "Не знает где речь — просто режет по тишине" },
+    { label: "5. Чанк → Gemini (весь кусок)",     detail: "Gemini сам делит текст внутри" },
+  ],
+  v12: [
+    { label: "1. Декодируем аудио → 16kHz",             detail: "OfflineAudioContext → Float32Array" },
+    { label: "2. analyzeEnergy(): RMS по 10мс фреймам", detail: "frames[i] = √(Σx²/N)" },
+    { label: "3. adaptiveThreshold(): p10 + (p90−p10)×0.15", detail: "Адаптивный порог по всему файлу" },
+    { label: "4. detectMicroSegs(): frame > threshold", detail: "minPause=200мс, minSeg=100мс" },
+    { label: "5. groupIntoChunks(chunkSec)",            detail: "Группируем сегменты до ~25с" },
+    { label: "6. flagMap: {001$001: {start,end}}",      detail: "Таймкоды сохранены — Gemini только текст" },
+  ],
+  silero: [
+    { label: "1. Декодируем аудио → 16kHz",           detail: "OfflineAudioContext → resampleTo16k()" },
+    { label: "2. Фреймы по 512 сэмплов (32мс)",       detail: "FRAME_SIZE=512, TARGET_SR=16000" },
+    { label: "3. ONNX: runVAD() — вероятность p(t)",  detail: "Нейросеть, скрытые состояния h, c" },
+    { label: "4. POS_THRESH=0.50 → начало речи",      detail: "PRE_PAD_MS=96мс — захват начала слова" },
+    { label: "5. NEG_THRESH=0.35 → конец речи",       detail: "REDEMPTION_MS=256мс — задержка закрытия" },
+    { label: "6. groupIntoChunks() — монолог = 1 сег!", detail: "⚠ Баг #1: 91.6с → галлюцинации Gemini" },
+  ],
+  vosk: [
+    { label: "1. Загружаем модель Vosk (~50MB)",      detail: "vosk-browser@0.0.8, ScriptProcessorNode" },
+    { label: "2. acceptWaveform() × 32768 сэмплов",  detail: "Прогоняем весь AudioBuffer чанками" },
+    { label: "3. rec.on('result') → word timestamps", detail: "Каждое слово: {word, start, end, conf}" },
+    { label: "4. Узбекский: плохое качество",         detail: "Vosk не обучен на узбекском — много ошибок" },
+    { label: "5. Timestamps берём, текст — нет",      detail: "Текст берём у Gemini" },
+    { label: "6. Legacy: скрыт в UI",                 detail: "Оставлен как архив" },
+  ],
+};
+
+const OUTPUT = {
+  smart:  "1 чанк (весь файл или по тишине)\nGemini сам угадывает структуру",
+  v12:    "N микро-сегментов (по паузам RMS)\nflagMap с точными таймкодами",
+  silero: "M сегментов (нейросеть)\nflagMap — но монолог = 1 огромный сег ⚠",
+  vosk:   "Word-level timestamps\nНет качества текста для узбекского",
+};
+
+function Waveform({ method }) {
+  const W = 560, H = 80;
+  const segs = SEGMENTS[method] || [];
+  const showDeriv = method === "v12";
+  const showProb  = method === "silero";
+  const totalH    = H + (showDeriv || showProb ? 34 : 0);
+  const col = METHOD_META[method].color;
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${totalH}`} style={{ display: "block" }}>
+      <rect x={0} y={0} width={W} height={H} fill="#0a0a0f" rx={4} />
+
+      {segs.map((seg, i) => (
+        <rect key={i} x={seg.start * W} y={0}
+          width={(seg.end - seg.start) * W} height={H}
+          fill={seg.color} stroke={seg.border}
+          strokeWidth={seg.warn ? 1.5 : 0.5}
+          strokeDasharray={seg.warn ? "4 2" : "none"} />
+      ))}
+
+      {method === "v12" && (
+        <line x1={0} y1={H * 0.38} x2={W} y2={H * 0.38}
+          stroke="#f59e0b" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.6} />
+      )}
+
+      {SIGNAL.map((v, i) => {
+        const x = (i / SIGNAL.length) * W;
+        const barH = v * (H - 8);
+        const cy = H / 2;
+        return (
+          <rect key={i} x={x} y={cy - barH / 2}
+            width={Math.max(1, W / SIGNAL.length - 0.5)}
+            height={Math.max(1, barH)}
+            fill={col} opacity={0.7} />
+        );
+      })}
+
+      {segs.map((seg, i) => (
+        <text key={i}
+          x={(seg.start + (seg.end - seg.start) / 2) * W} y={12}
+          textAnchor="middle"
+          fill={seg.warn ? "#ef4444" : col}
+          fontSize={9} fontFamily="monospace">{seg.label}</text>
+      ))}
+
+      {showDeriv && (
+        <>
+          <rect x={0} y={H + 4} width={W} height={26} fill="#0d1117" rx={2} />
+          <text x={4} y={H + 14} fill="#f59e0b" fontSize={8} fontFamily="monospace" opacity={0.7}>dE/dt</text>
+          {D_SIGNAL.map((v, i) => {
+            const x = (i / D_SIGNAL.length) * W;
+            const barH = v * 22;
+            return <rect key={i} x={x} y={H + 30 - barH}
+              width={Math.max(1, W / D_SIGNAL.length - 0.3)}
+              height={Math.max(0.5, barH)} fill="#f59e0b" opacity={0.8} />;
+          })}
+        </>
+      )}
+
+      {showProb && (
+        <>
+          <rect x={0} y={H + 4} width={W} height={26} fill="#0d1117" rx={2} />
+          <text x={4} y={H + 14} fill="#a78bfa" fontSize={8} fontFamily="monospace" opacity={0.7}>p(речь)</text>
+          {SIGNAL.map((v, i) => {
+            if (i === 0) return null;
+            const prob  = v > 0.08 ? Math.min(1, v * 1.4) : v * 0.3;
+            const probP = SIGNAL[i-1] > 0.08 ? Math.min(1, SIGNAL[i-1]*1.4) : SIGNAL[i-1]*0.3;
+            return (
+              <line key={i}
+                x1={(i-1)/SIGNAL.length*W} y1={H + 4 + (1-probP)*26}
+                x2={i/SIGNAL.length*W}     y2={H + 4 + (1-prob)*26}
+                stroke="#a78bfa" strokeWidth={1.2} opacity={0.9} />
+            );
+          })}
+          <line x1={0} y1={H + 4 + 0.5*26} x2={W} y2={H + 4 + 0.5*26}
+            stroke="#22c55e" strokeWidth={0.7} strokeDasharray="3 2" opacity={0.7} />
+          <line x1={0} y1={H + 4 + 0.65*26} x2={W} y2={H + 4 + 0.65*26}
+            stroke="#f87171" strokeWidth={0.7} strokeDasharray="3 2" opacity={0.7} />
+          <text x={W-4} y={H+4+0.5*26-2}  textAnchor="end" fill="#22c55e" fontSize={7} fontFamily="monospace">POS 0.50</text>
+          <text x={W-4} y={H+4+0.65*26-2} textAnchor="end" fill="#f87171" fontSize={7} fontFamily="monospace">NEG 0.35</text>
+        </>
+      )}
+
+      {[0, 0.25, 0.5, 0.75, 1.0].map(t => (
+        <text key={t} x={t * W} y={H - 2} fill="#444" fontSize={7} fontFamily="monospace"
+          textAnchor={t === 1 ? "end" : "start"}>{(t * 186).toFixed(0)}с</text>
+      ))}
+    </svg>
+  );
+}
+
+function App() {
+  const [active, setActive] = useState("silero");
+  const meta  = METHOD_META[active];
+  const steps = STEPS[active];
+
+  const box = {
+    background: "#0d0d16",
+    border: `1px solid ${meta.border}`,
+    borderRadius: 8,
+    padding: "14px 16px",
+    marginBottom: 16,
+  };
+
+  return (
+    <div style={{ background:"#08080d", minHeight:"100vh",
+      fontFamily:"'JetBrains Mono','Fira Code',monospace", color:"#c9d1d9", padding:"24px 16px" }}>
+      <div style={{ maxWidth:640, margin:"0 auto" }}>
+
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:11, color:"#444", letterSpacing:2, marginBottom:6 }}>
+            ФАЗА 1 — СЕГМЕНТАЦИЯ АУДИО
+          </div>
+          <div style={{ fontSize:20, fontWeight:700, color:"#e6edf3" }}>
+            Как анализаторы находят границы речи
+          </div>
+          <div style={{ fontSize:11, color:"#555", marginTop:4 }}>
+            Тестовый файл: MohirDEV Test.mp3 — 186с &nbsp;|&nbsp;
+            <a href="./experiment.html" style={{ color:"#444", textDecoration:"none" }}>← experiment.html</a>
+          </div>
+        </div>
+
+        {/* Selector */}
+        <div style={{ display:"flex", gap:6, marginBottom:20, flexWrap:"wrap" }}>
+          {METHODS.map(m => {
+            const mm = METHOD_META[m];
+            const on = m === active;
+            return (
+              <button key={m} onClick={() => setActive(m)} style={{
+                background: on ? mm.bg : "#0f0f18",
+                border: `1px solid ${on ? mm.color : "#1e1e2e"}`,
+                color: on ? mm.color : "#555",
+                borderRadius:6, padding:"7px 14px", fontSize:12,
+                cursor:"pointer", fontFamily:"inherit",
+                fontWeight: on ? 700 : 400,
+              }}>
+                {mm.icon} {mm.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Waveform */}
+        <div style={{ ...box }}>
+          <div style={{ fontSize:10, color:meta.color, marginBottom:8, opacity:0.8 }}>
+            ▶ AudioBuffer → {meta.desc}
+          </div>
+          <Waveform method={active} />
+        </div>
+
+        {/* Steps */}
+        <div style={{ ...box }}>
+          <div style={{ fontSize:10, color:meta.color, marginBottom:12, opacity:0.8, letterSpacing:1 }}>
+            АЛГОРИТМ ШАГ ЗА ШАГОМ
+          </div>
+          {steps.map((step, i) => (
+            <div key={i} style={{ display:"flex", gap:12, marginBottom:10, alignItems:"flex-start" }}>
+              <div style={{
+                width:20, height:20, borderRadius:"50%",
+                background:meta.bg, border:`1px solid ${meta.border}`,
+                color:meta.color, fontSize:10,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                flexShrink:0, marginTop:1,
+              }}>{i+1}</div>
+              <div>
+                <div style={{ fontSize:12, color:"#e6edf3", fontWeight:600 }}>{step.label}</div>
+                <div style={{ fontSize:11, color:"#555", marginTop:2 }}>{step.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Output */}
+        <div style={{ ...box }}>
+          <div style={{ fontSize:10, color:meta.color, marginBottom:8, opacity:0.8, letterSpacing:1 }}>
+            ВЫХОД → В ФАЗУ 2 (DISPATCHER)
+          </div>
+          <pre style={{ margin:0, fontSize:11, color:"#7ee787", lineHeight:1.7 }}>
+            {OUTPUT[active]}
+          </pre>
+        </div>
+
+        {/* Comparison */}
+        <div style={{ background:"#0d0d16", border:"1px solid #1e1e2e", borderRadius:8, padding:"14px 16px" }}>
+          <div style={{ fontSize:10, color:"#555", marginBottom:12, letterSpacing:1 }}>
+            СРАВНЕНИЕ: ПОКРЫТИЕ И ТОЧНОСТЬ ГРАНИЦ
+          </div>
+          {[
+            { m:"smart",  cov:60, prec:40, issue:"Не знает где речь" },
+            { m:"v12",    cov:75, prec:82, issue:"Теряет тихую речь" },
+            { m:"silero", cov:85, prec:91, issue:"Монолог = 1 сег" },
+            { m:"vosk",   cov:90, prec:30, issue:"Слабый узбекский" },
+          ].map(row => {
+            const mm = METHOD_META[row.m];
+            const on = row.m === active;
+            return (
+              <div key={row.m} onClick={() => setActive(row.m)} style={{
+                display:"flex", alignItems:"center", gap:10,
+                padding:"7px 8px", borderRadius:5, marginBottom:4,
+                background: on ? mm.bg : "transparent",
+                border:`1px solid ${on ? mm.border : "transparent"}`,
+                cursor:"pointer",
+              }}>
+                <div style={{ width:80, fontSize:11, color:mm.color }}>{mm.icon} {mm.label}</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ display:"flex", gap:4, marginBottom:3, alignItems:"center" }}>
+                    <div style={{ width:`${row.cov}%`, height:4, background:mm.color, borderRadius:2, opacity:0.7 }} />
+                    <div style={{ fontSize:9, color:"#555" }}>{row.cov}%</div>
+                  </div>
+                  <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                    <div style={{ width:`${row.prec}%`, height:4, background:mm.color, borderRadius:2, opacity:0.35 }} />
+                    <div style={{ fontSize:9, color:"#555" }}>{row.prec}%</div>
+                  </div>
+                </div>
+                <div style={{ fontSize:10, color:"#f87171", width:150, textAlign:"right" }}>⚠ {row.issue}</div>
+              </div>
+            );
+          })}
+          <div style={{ display:"flex", gap:20, marginTop:10, fontSize:9, color:"#333" }}>
+            <span>▬ покрытие аудио</span>
+            <span>▬ точность границ</span>
+          </div>
+        </div>
+
+        <div style={{ marginTop:16, fontSize:10, color:"#333", textAlign:"center" }}>
+          UzTranscribe v12.5.4 · Phase 1 Visualizer
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
