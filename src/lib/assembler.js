@@ -337,27 +337,15 @@ export function assemble(
     return buildSrt(expanded)
   }
 
-  // ── v13: RMS sub-cut для длинных VAD-сегментов ────────────────────────────
-  // Всегда активен если есть audioBuf (не экспериментальный, а основной путь)
-  let segs = allSegs
-  if (audioBuf) {
-    const expanded = []
-    for (const seg of allSegs) {
-      if (seg.type === 'music') { expanded.push(seg); continue }
-      expanded.push(...rmsSubCut(audioBuf, seg, targetDur, maxChars))
-    }
-    segs = expanded
-  }
-
   // ── Dedup ──────────────────────────────────────────────────────────────────
   let deduped
   if (dedupWindow === 0) {
-    deduped = segs
+    deduped = allSegs
   } else {
-    deduped = [segs[0]]
-    for (let i = 1; i < segs.length; i++) {
-      const curr = norm(segs[i].text)
-      if (segs[i].type === 'music') { deduped.push(segs[i]); continue }
+    deduped = [allSegs[0]]
+    for (let i = 1; i < allSegs.length; i++) {
+      const curr = norm(allSegs[i].text)
+      if (allSegs[i].type === 'music') { deduped.push(allSegs[i]); continue }
       const windowStart = Math.max(0, deduped.length - dedupWindow)
       const isDup = deduped.slice(windowStart).some(prev => {
         if (prev.type === 'music') return false
@@ -370,7 +358,7 @@ export function assemble(
         if (pwSet.size < 4 || cwArr.length < 4) return false
         return cwArr.filter(w => pwSet.has(w)).length / Math.max(pwSet.size, cwArr.length) > 0.75
       })
-      if (!isDup) deduped.push(segs[i])
+      if (!isDup) deduped.push(allSegs[i])
     }
   }
 
@@ -390,15 +378,28 @@ export function assemble(
     merged = [...mergedSpeech, ...musicSegs].sort((a, b) => a.start - b.start)
   }
 
+  // ── v13: RMS sub-cut — ПОСЛЕ merge ────────────────────────────────────────
+  // Причина: rmsSubCut создаёт части с gap=0; если до merge — mergeStrict
+  // склеит их обратно (gap=0 < mergeGap=0.5с). Режем уже смерженные длинные.
+  let postCut = merged
+  if (audioBuf) {
+    const expanded = []
+    for (const seg of merged) {
+      if (seg.type === 'music') { expanded.push(seg); continue }
+      expanded.push(...rmsSubCut(audioBuf, seg, targetDur, maxChars))
+    }
+    postCut = expanded
+  }
+
   // ── Clamp overlaps ─────────────────────────────────────────────────────────
-  for (let i = 0; i < merged.length - 1; i++) {
-    if (merged[i].end > merged[i + 1].start - 0.05)
-      merged[i].end = Math.max(merged[i].start + 0.1, merged[i + 1].start - 0.05)
+  for (let i = 0; i < postCut.length - 1; i++) {
+    if (postCut[i].end > postCut[i + 1].start - 0.05)
+      postCut[i].end = Math.max(postCut[i].start + 0.1, postCut[i + 1].start - 0.05)
   }
 
   // ── Hard split по maxChars ─────────────────────────────────────────────────
   const final = []
-  for (const seg of merged) {
+  for (const seg of postCut) {
     final.push(...hardSplitByChars(seg, maxChars))
   }
 
