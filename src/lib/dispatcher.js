@@ -37,13 +37,13 @@ const LANG_MAP = {
 const PROMPT_LEAK     = /transcribe this|return only|json array|no speech|raw json|markdown/i
 const TIMESTAMP_HALLUC = /^[\d]{1,2}:[\d]{2}(\s+[\d]{1,2}:[\d]{2})*\s*$/
 
-// Алфавитные правила — только скрипт, без инструкций по именам
+// Алфавитные правила — только скрипт, ничего лишнего
 const SCRIPT_RULE = {
-  uz: 'Write ONLY in Uzbek Latin script (a b d e f g h i j k l m n o p q r s t u v x y z oʻ gʻ sh ch ng). NO Cyrillic.',
-  ru: 'Write ONLY in Cyrillic script. NO Latin.',
-  kk: 'Write ONLY in Kazakh Cyrillic script. NO Latin.',
-  tg: 'Write ONLY in Tajik Cyrillic script. NO Latin.',
-  en: 'Write ONLY in Latin script.',
+  uz: 'Write in Uzbek Latin script. No Cyrillic.',
+  ru: 'Write in Russian Cyrillic. No Latin.',
+  kk: 'Write in Kazakh Cyrillic. No Latin.',
+  tg: 'Write in Tajik Cyrillic. No Latin.',
+  en: '',  // en — без ограничений
 }
 
 // v13: только рабочие модели
@@ -101,39 +101,29 @@ function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang, 
   const n          = segments.length
   const scriptRule = SCRIPT_RULE[lang] || ''
 
-  // Список сегментов — хинт добавляем только если classHints передан и не null
   const list = segments.map((s, i) => {
-    let line = `  ${i + 1}. ${s.localStart.toFixed(2)}s – ${s.localEnd.toFixed(2)}s`
-    if (classHints && classHints[i]) {
-      line += ` ${classHints[i]}`
-    }
+    let line = `  ${i + 1}. ${s.localStart.toFixed(2)}s–${s.localEnd.toFixed(2)}s`
+    if (classHints && classHints[i]) line += ` ${classHints[i]}`
     return line
   }).join('\n')
 
-  const hasSfxHints = classHints && classHints.some(h => h === '[sfx]')
-  const hasMusicHints = classHints && classHints.some(h => h === '[music-only]')
+  const hasSfx   = classHints && classHints.some(h => h === '[sfx]')
+  const hasMusic = classHints && classHints.some(h => h === '[music-only]')
 
   return (
-    `Transcribe this ${langName} audio clip (${chunkDur.toFixed(1)}s).\n\n` +
-    `It contains ${n} speech segment(s):\n` +
-    `${list}\n\n` +
+    `Transcribe ${langName} speech from this ${chunkDur.toFixed(1)}s audio.\n` +
+    (scriptRule ? `${scriptRule}\n` : '') +
+    `\n${n} segment(s):\n${list}\n\n` +
     `Rules:\n` +
-    (scriptRule ? `- ${scriptRule}\n` : '') +
-    `- Transcribe ALL human speech, even if there is background music, sound effects, or noise.\n` +
-    (hasSfxHints
-      ? `- Segments marked [sfx] have background sound effects — focus on the spoken words.\n`
-      : '') +
-    (hasMusicHints
-      ? `- Segments marked [music-only] have no speech — return "♪" for those.\n`
-      : '') +
-    `- Pure silence with no speech: return ""\n` +
+    `- Transcribe all speech, even over background sound or music.\n` +
+    (hasSfx   ? `- [sfx] = background noise, speech is present — transcribe it.\n` : '') +
+    (hasMusic ? `- [music-only] = no speech — return "♪".\n` : '') +
+    `- No speech / silence: return "".\n` +
     (dedupWindow === 0
-      ? `- Repeated speech is real content — transcribe it again.\n`
-      : `- Do NOT repeat text already transcribed in previous segments.\n`) +
-    `\nOutput — non-negotiable:\n` +
-    `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
-    `- No timestamps. No explanations. No markdown. Only the array.\n\n` +
-    `Example: ${JSON.stringify(Array(Math.min(n, 3)).fill('...'))}${n > 3 ? ',...]' : ''}`
+      ? `- Repeated speech is real — transcribe it.\n`
+      : `- Do not repeat text from previous segments.\n`) +
+    `\nReturn ONLY a raw JSON array of exactly ${n} string(s). No timestamps, no comments.\n` +
+    `Example: ${n > 2 ? '["...", "...", ...]' : JSON.stringify(Array(n).fill('...'))}`
   )
 }
 
