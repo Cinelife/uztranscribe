@@ -36,10 +36,8 @@ export default function SettingsCard({
   orModel, setOrModel, gmModel, setGmModel,
   voskReady, setVoskReady, voskModelRef,
   concurrency, setConcurrency,
-  classifierMode,  setClassifierMode,
   showMusicMarker, setShowMusicMarker,
-  useRmsTiming,    setUseRmsTiming,
-  useFFT,          setUseFFT,
+  targetDur, setTargetDur,
 }) {
   const voskFileRef = useRef(null)
   const [voskStatus, setVoskStatus] = useState(null)
@@ -73,7 +71,7 @@ export default function SettingsCard({
     <div className="card">
       <div className="ct">Настройки транскрипции</div>
 
-      {/* Провайдер + Язык — оригинал 12.5.3 */}
+      {/* Провайдер + Язык */}
       <div className="r2">
         <div>
           <label>Провайдер</label>
@@ -95,7 +93,7 @@ export default function SettingsCard({
         </div>
       </div>
 
-      {/* Gemini model select — оригинал 12.5.3 */}
+      {/* Gemini model */}
       {prov === 'gm' && (
         <div style={{ marginTop:4 }}>
           <label>Модель Gemini
@@ -111,7 +109,7 @@ export default function SettingsCard({
         </div>
       )}
 
-      {/* OpenRouter model select */}
+      {/* OpenRouter model */}
       {(prov === 'or' || prov === 'bo') && (
         <div style={{ marginTop:4 }}>
           <label>Модель OpenRouter</label>
@@ -121,7 +119,7 @@ export default function SettingsCard({
         </div>
       )}
 
-      {/* Слайдеры в r2 — оригинал 12.5.3 */}
+      {/* Слайдеры */}
       <div className="r2" style={{ marginTop:4 }}>
         <div>
           <label>Размер чанка: <strong style={{color:'var(--txt)'}}>{chunkSec}с</strong></label>
@@ -145,7 +143,7 @@ export default function SettingsCard({
             onChange={e => setDedupWindow(Number(e.target.value))} />
         </div>
 
-        {/* Concurrency в r2 — оригинал 12.5.3 */}
+        {/* Concurrency */}
         {isGmPath && (
           <div>
             <label>Параллельность (Concurrency): <strong style={{color:'var(--pu)'}}>{concurrency}</strong>
@@ -157,7 +155,7 @@ export default function SettingsCard({
         )}
       </div>
 
-      {/* v12 advanced — оригинал 12.5.3 */}
+      {/* v12 advanced */}
       {timingMode === 'v12' && (
         <div className="sliders-row" style={{marginTop:'8px',opacity:0.9}}>
           <div>
@@ -190,7 +188,7 @@ export default function SettingsCard({
         </div>
       )}
 
-      {/* ── v12.5.4 Экспериментальные ────────────────────────────────────── */}
+      {/* ── v13: Дополнительно ────────────────────────────────────────────── */}
       {isGmPath && (
         <div style={{
           padding:'12px 14px', background:'var(--bg3)',
@@ -199,42 +197,36 @@ export default function SettingsCard({
           <div style={{
             fontSize:'0.7em', letterSpacing:'.1em', color:'var(--mu)',
             textTransform:'uppercase', marginBottom:'10px',
-            display:'flex', alignItems:'center', gap:'6px'
-          }}>⚗ Экспериментальные (бэта)</div>
+          }}>Дополнительно</div>
 
+          {/* targetDur — целевая длина субтитра */}
           <div style={{marginBottom:'10px'}}>
-            <div style={{fontSize:'0.75em',color:'var(--dm)',marginBottom:'5px'}}>
-              Классификатор аудио (ZCR+RMS):
+            <div style={{fontSize:'0.75em', color:'var(--dm)', marginBottom:'5px'}}>
+              Длина субтитра:{' '}
+              <strong style={{color:'var(--pu)'}}>{targetDur}с</strong>
+              <span style={{fontSize:'0.85em', color:'var(--mu)', marginLeft:'6px'}}>
+                {targetDur <= 1.0 ? '← быстрый монтаж' : targetDur >= 2.5 ? 'длинные строки →' : 'стандарт'}
+              </span>
             </div>
-            <div style={{display:'flex',gap:'6px'}}>
-              {[['off','✗ выкл'],['hint','💬 hint'],['full','🎯 full']].map(([v,l]) => (
-                <button key={v} className={`btn tm${classifierMode===v?' on':''}`}
-                  onClick={() => setClassifierMode(v)} style={{fontSize:'0.72em',padding:'3px 10px'}}>{l}</button>
+            <div style={{display:'flex', gap:'5px'}}>
+              {[1.0, 1.5, 2.0, 2.5, 3.0].map(v => (
+                <button key={v}
+                  className={`btn tm${targetDur === v ? ' on' : ''}`}
+                  onClick={() => setTargetDur(v)}
+                  style={{fontSize:'0.72em', padding:'3px 10px'}}
+                >{v}с</button>
               ))}
             </div>
           </div>
 
+          {/* showMusicMarker */}
           <Toggle on={showMusicMarker} onToggle={() => setShowMusicMarker(v => !v)}
             label="Показывать ♪ в субтитрах"
-            hint={showMusicMarker ? 'музыкальные блоки попадут в SRT' : 'музыкальные блоки пропускаются'} />
-
-          <div style={{marginTop:'6px'}}>
-            <Toggle on={useRmsTiming} onToggle={() => setUseRmsTiming(v => !v)}
-              label="RMS sub-timing" hint="точнее делит длинные сегменты по энергии" />
-          </div>
-
-          {useRmsTiming && (
-            <div style={{marginLeft:'12px',marginTop:'4px',display:'flex',gap:'6px'}}>
-              {[['rms','📊 RMS'],['fft','🌊 ZCR']].map(([v,l]) => (
-                <button key={v} className={`btn tm${(v==='fft'?useFFT:!useFFT)?' on':''}`}
-                  onClick={() => setUseFFT(v==='fft')} style={{fontSize:'0.72em',padding:'3px 10px'}}>{l}</button>
-              ))}
-            </div>
-          )}
+            hint={showMusicMarker ? 'музыкальные блоки → SRT' : 'музыкальные блоки пропускаются'} />
         </div>
       )}
 
-      {/* Метод тайм-кодов — оригинал 12.5.3 */}
+      {/* Метод тайм-кодов */}
       {prov !== 'el' && (
         <div style={{ marginTop:4 }}>
           <label>Метод тайм-кодов</label>
@@ -244,48 +236,37 @@ export default function SettingsCard({
                 onClick={() => setTimingMode(v)}>{l}</button>
             ))}
           </div>
-          <div className="tm-desc">{TM_DESC[timingMode]}</div>
-
-          {timingMode === 'silero' && (
-            <div style={{marginTop:'10px'}}>
-              <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
-                Тайм-коды внутри сегмента:
-              </label>
-              <div style={{display:'flex',gap:'8px'}}>
-                {[['vad','📍 VAD'],['words','📏 По словам']].map(([v,l]) => (
-                  <button key={v} className={`btn tm${subTiming===v?' on':''}`}
-                    onClick={() => setSubTiming(v)} style={{fontSize:'0.75em',padding:'4px 10px'}}>{l}</button>
-                ))}
-              </div>
-            </div>
-          )}
+          <div style={{fontSize:'0.72em',color:'var(--dm)',marginTop:'5px',lineHeight:1.4}}>
+            {TM_DESC[timingMode]}
+          </div>
         </div>
       )}
 
-      {/* Vosk loader — оригинал 12.5.3 */}
-      {timingMode === 'vosk' && prov !== 'el' && (
-        <div style={{ padding:'14px', background:'var(--bg3)', borderRadius:'8px', border:'1px solid var(--brd)' }}>
-          <label style={{ marginBottom:8 }}>
-            🔬 Vosk модель (.zip) —{' '}
-            <a href="https://alphacephei.com/vosk/models" target="_blank" rel="noreferrer"
-               style={{ color:'var(--inf)' }}>alphacephei.com/vosk/models</a>
-            <span style={{ color:'var(--mu)', marginLeft:6 }}>(vosk-model-small-uz рекомендован)</span>
-          </label>
-          <div className="kr">
-            <input type="file" ref={voskFileRef} accept=".zip" disabled={voskReady} style={{ flex:1 }} />
-            <button className="btn bc" onClick={handleLoadVosk} disabled={voskReady || voskStatus==='loading'}
-              style={voskReady ? {color:'var(--ok)',borderColor:'var(--ok)'} : {}}>
-              {voskReady ? '✓ Загружено' : voskStatus==='loading' ? '⏳...' : 'Загрузить'}
+      {/* Vosk loader */}
+      {timingMode === 'vosk' && (
+        <div style={{marginTop:'8px',padding:'10px 12px',background:'var(--bg3)',borderRadius:'8px',border:'1px solid var(--brd)'}}>
+          <div style={{fontSize:'0.75em',color:'var(--dm)',marginBottom:'6px'}}>
+            Vosk модель (.zip): <a href="https://alphacephei.com/vosk/models" target="_blank" rel="noreferrer"
+              style={{color:'var(--pu)'}}>alphacephei.com/vosk/models</a>
+          </div>
+          <div style={{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}}>
+            <input ref={voskFileRef} type="file" accept=".zip"
+              style={{fontSize:'0.75em',flex:1,minWidth:0}} disabled={voskReady} />
+            <button className={`btn${voskStatus==='ok'?' ok':''}`}
+              onClick={handleLoadVosk} disabled={voskReady}
+              style={{fontSize:'0.75em',padding:'4px 12px',whiteSpace:'nowrap'}}>
+              {voskStatus === 'ok' ? '✅ Загружено' : voskStatus === 'loading' ? '⏳...' : 'Загрузить'}
             </button>
           </div>
           {voskMsg && (
-            <div style={{marginTop:'8px',padding:'6px 10px',borderRadius:'6px',fontSize:'0.78em',
-              background: voskStatus==='ok' ? 'rgba(0,200,100,.1)' : voskStatus==='error' ? 'rgba(200,0,0,.1)' : 'var(--bg)'}}>
+            <div style={{fontSize:'0.72em',marginTop:'6px',color:voskStatus==='error'?'var(--er)':'var(--ok)'}}>
               {voskMsg}
             </div>
           )}
           {voskLog.length > 0 && (
-            <div className="vosk-init-log">{voskLog.map((l,i) => <div key={i}>{l}</div>)}</div>
+            <div style={{fontSize:'0.68em',color:'var(--dm)',marginTop:'4px'}}>
+              {voskLog.map((l,i) => <div key={i}>{l}</div>)}
+            </div>
           )}
         </div>
       )}
