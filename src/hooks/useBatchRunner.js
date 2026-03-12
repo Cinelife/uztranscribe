@@ -97,11 +97,9 @@ export function useBatchRunner() {
     gmModel         = 'gemini-2.5-flash-lite',
     voskReady, voskModelRef,
     concurrency     = 6,
-    // v12.5.4 experimental
     classifierMode  = 'off',
     showMusicMarker = false,
-    useRmsTiming    = false,
-    useFFT          = false,
+    targetDur       = 1.5,   // v13: целевая длина субтитра (сек)
   }) => {
     if (!files.length)                              { alert('Добавь файлы');             return }
     if (prov === 'el' && !elKey)                    { alert('Нет ElevenLabs API Key');   return }
@@ -136,7 +134,7 @@ export function useBatchRunner() {
             'dm'
           )
           addLog(
-            `⚙ classifier:${classifierMode} | ♪:${showMusicMarker ? 'вкл' : 'выкл'} | rms-timing:${useRmsTiming ? 'вкл' : 'выкл'} | fft:${useFFT && useRmsTiming ? 'вкл' : 'выкл'}`,
+            `⚙ classifier:${classifierMode} | ♪:${showMusicMarker ? 'вкл' : 'выкл'} | targetDur:${targetDur}с`,
             'dm'
           )
         }
@@ -305,11 +303,10 @@ export function useBatchRunner() {
               flagMap, textMap,
               maxChars, mergeGap, mergeMode, dedupWindow,
               isSilero ? subTiming : 'vad',
-              audioBufCached,   // AudioBuffer для RMS/FFT timing
-              useRmsTiming,
-              useFFT,
+              audioBufCached,   // AudioBuffer для RMS sub-cut
+              targetDur,        // v13: целевая длина субтитра
               showMusicMarker,
-              factorMap         // v13: factorMap для умных решений в assembler
+              factorMap         // зарезервировано
             )
             const p3Ms    = Math.round(performance.now() - p3T0)
             const segCount = srtContent.split('\n\n').filter(b => b.trim()).length
