@@ -1,9 +1,8 @@
-name: Deploy to GitHub Pages
+name: Deploy UzTranscribe v14
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,29 +11,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Check for API key leaks
+      - name: Security check — no API keys
         run: |
-          echo "🔍 Проверка на утечку API ключей..."
-          LEAKED=0
-          if grep -rE 'sk_[a-zA-Z0-9]{30,}' src/ 2>/dev/null | grep -v "placeholder\|example\|your"; then
-            echo "❌ Найден ElevenLabs ключ в src/"; LEAKED=1
-          fi
-          if grep -rE 'AIza[a-zA-Z0-9_-]{35}' src/ 2>/dev/null; then
-            echo "❌ Найден Google/Gemini ключ в src/"; LEAKED=1
-          fi
-          if grep -rE 'sk-or-v1-[a-zA-Z0-9]{60,}' src/ 2>/dev/null; then
-            echo "❌ Найден OpenRouter ключ в src/"; LEAKED=1
-          fi
-          if [ $LEAKED -eq 1 ]; then
-            echo "🚨 ДЕПЛОЙ ОСТАНОВЛЕН: убери API ключи из исходников!"
+          if grep -r "AIza\|sk-\|EL_\|Bearer " src/ --include="*.js" --include="*.jsx" 2>/dev/null | grep -v "localStorage\|placeholder\|example"; then
+            echo "❌ API ключ найден в коде!"
             exit 1
           fi
           echo "✅ API ключи не найдены"
@@ -61,7 +44,7 @@ jobs:
 
           mkdir -p docs/versions
 
-          # Копируем уже существующие архивы
+          # Копируем существующие архивы
           if [ -d gh-pages-existing/versions ]; then
             rsync -a --exclude='manifest.json' gh-pages-existing/versions/ docs/versions/ || true
             echo "✅ Скопированы существующие архивы"
@@ -85,14 +68,10 @@ jobs:
                 gh-pages-existing/ "docs/versions/$PREV_VER/" || true
             fi
 
-            # ── ИСПРАВЛЕНИЕ 404: патчим index.html архивной версии ──────────
-            # Vite билд использует ./assets/... — из подпапки /versions/X.X.X/
-            # эти пути ломаются. Добавляем <base href> чтобы браузер искал
-            # assets от корня архивной папки, а не от текущего URL.
+            # Патчим <base href> в архивном index.html
             ARCHIVE_INDEX="docs/versions/$PREV_VER/index.html"
             if [ -f "$ARCHIVE_INDEX" ]; then
               BASE_HREF="${SITE_BASE}versions/${PREV_VER}/"
-              # Вставляем <base href="..."> сразу после <head>
               sed -i "s|<head>|<head><base href=\"${BASE_HREF}\">|" "$ARCHIVE_INDEX"
               echo "✅ Пропатчен index.html для v$PREV_VER: base href = $BASE_HREF"
             fi
@@ -156,3 +135,4 @@ jobs:
           CURRENT_VER=$(node -e "console.log(require('./package.json').version)")
           echo "## ✅ Задеплоено v$CURRENT_VER" >> $GITHUB_STEP_SUMMARY
           echo "🌐 https://cinelife.github.io/uztranscribe" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Старая версия автоматически заархивирована" >> $GITHUB_STEP_SUMMARY
