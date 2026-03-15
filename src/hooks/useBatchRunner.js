@@ -98,7 +98,7 @@ export function useBatchRunner() {
         let audioBufCached = null
         try {
           audioBufCached = await decodeAudio(file)
-          addLog(`  Audio: ${audioBufCached.duration.toFixed(1)}с | ${audioBufCached.sampleRate}Hz декодировано`, 'dm')
+          addLog(`  Audio: ${audioBufCached.duration.toFixed(1)}с | ${audioBufCached.sampleRate}Hz | ${(file.size/1e6).toFixed(1)} MB декодировано`, 'dm')
         } catch (e) {
           addLog(`  ⚠ decodeAudio: ${e.message}`, 'wa')
         }
