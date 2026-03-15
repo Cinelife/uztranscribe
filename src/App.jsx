@@ -1,3 +1,7 @@
+// App.jsx — v14.0.0
+// Убрано: Vosk, classifierMode, useRmsTiming, useFFT
+// Добавлено: gmModel из dispatcher.js (GEMINI_MODELS)
+
 import { useState, useRef }  from 'react'
 import Header                from './components/Header.jsx'
 import ApiKeysCard           from './components/ApiKeysCard.jsx'
@@ -8,72 +12,63 @@ import TranslationCard       from './components/TranslationCard.jsx'
 import { useBatchRunner }    from './hooks/useBatchRunner.js'
 import { useTranslation }    from './hooks/useTranslation.js'
 import { OR_MODELS }         from './lib/openrouter.js'
+import { GM_DEFAULT_MODEL }  from './lib/dispatcher.js'
 
 export default function App() {
   const [elKey, setElKey] = useState(() => localStorage.getItem('uz_el') || '')
   const [gmKey, setGmKey] = useState(() => localStorage.getItem('uz_gm') || '')
   const [orKey, setOrKey] = useState(() => localStorage.getItem('uz_or') || '')
 
-  const [prov,       setProv]       = useState('el')
-  const [lang,       setLang]       = useState('uz')
-  const [chunkSec,   setChunkSec]   = useState(30)
-  const [maxChars,   setMaxChars]   = useState(80)
-  const [minPause,   setMinPause]   = useState(200)  // ms — segmenter sensitivity
-  const [mergeGap,   setMergeGap]   = useState(0.5)  // s  — assembler merge threshold
-  const [mergeMode,  setMergeMode]  = useState('strict') // strict | balanced | sentence
-  const [timingMode, setTimingMode] = useState('smart')
-  const [orModel,    setOrModel]    = useState(OR_MODELS[0].id)
+  // ── Основные настройки ──
+  const [prov,        setProv]        = useState('gm')
+  const [lang,        setLang]        = useState('uz')
+  const [chunkSec,    setChunkSec]    = useState(25)
+  const [maxChars,    setMaxChars]    = useState(45)
+  const [minPause,    setMinPause]    = useState(250)
+  const [mergeGap,    setMergeGap]    = useState(0.6)
+  const [mergeMode,   setMergeMode]   = useState('balanced')
+  const [dedupWindow, setDedupWindow] = useState(0)
+  const [timingMode,  setTimingMode]  = useState('v12flags')
+  const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
+  const [gmModel,     setGmModel]     = useState(GM_DEFAULT_MODEL)
+  const [concurrency, setConcurrency] = useState(6)
+  const [showMusicMarker, setShowMusicMarker] = useState(false)
 
   const [files,        setFiles]        = useState([])
   const [fileStatuses, setFileStatuses] = useState({})
-
-  const [voskReady, setVoskReady] = useState(false)
-  const voskModelRef              = useRef(null)
-
-  const [trProvider, setTrProvider] = useState('gm')
-  const [trSrc,      setTrSrc]      = useState('last')
-  const [trPair,     setTrPair]     = useState('uz|ru')
 
   const {
     log, clearLog,
     progress, progressText, statusText,
     voskVisible, voskPct, voskText,
     running, startBatch, stopBatch,
-    lastSrtMap
+    lastSrtMap,
   } = useBatchRunner()
 
   const {
-    trLog, clearTrLog, trStatus, trRunning, startTranslate
+    trLog, clearTrLog, trStatus, trRunning,
+    trProvider, setTrProvider,
+    trSrc, setTrSrc,
+    trPair, setTrPair,
+    handleTranslate,
   } = useTranslation()
 
   const handleStart = () => startBatch({
-    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode, timingMode,
-    elKey, gmKey, orKey, orModel,
-    voskReady, voskModelRef
-  })
-
-  const handleTranslate = ({ trFileRef }) => startTranslate({
-    gmKey, orKey, orModel,
-    trProvider, trSrc, trPair,
-    lastSrtMap, trFileRef
+    files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode,
+    timingMode, dedupWindow,
+    elKey, gmKey, orKey, orModel, gmModel,
+    concurrency, showMusicMarker,
   })
 
   return (
     <div className="wrap">
       <Header />
 
-      <div className="info">
-        📥 SRT → <strong>Downloads</strong> автоматически &nbsp;|&nbsp;
-        💰 <strong>Gemini</strong> бесплатно до ~2 ч/день &nbsp;|&nbsp;
-        <strong>ElevenLabs</strong> $0.40/час &nbsp;|&nbsp;
-        🔀 <strong>OpenRouter</strong> — гибкий выбор модели &nbsp;|&nbsp;
-        🔬 <strong>Vosk 2-pass</strong> &nbsp;|&nbsp;
-        🌐 Перевод с культурной адаптацией
-      </div>
-
       <ApiKeysCard
-        elKey={elKey} gmKey={gmKey} orKey={orKey}
-        setElKey={setElKey} setGmKey={setGmKey} setOrKey={setOrKey}
+        elKey={elKey} setElKey={setElKey}
+        gmKey={gmKey} setGmKey={setGmKey}
+        orKey={orKey} setOrKey={setOrKey}
+        prov={prov}
       />
 
       <SettingsCard
@@ -83,11 +78,13 @@ export default function App() {
         maxChars={maxChars}   setMaxChars={setMaxChars}
         minPause={minPause}   setMinPause={setMinPause}
         mergeGap={mergeGap}   setMergeGap={setMergeGap}
-        mergeMode={mergeMode}  setMergeMode={setMergeMode}
-        timingMode={timingMode} setTimingMode={setTimingMode}
+        mergeMode={mergeMode} setMergeMode={setMergeMode}
+        dedupWindow={dedupWindow} setDedupWindow={setDedupWindow}
+        timingMode={timingMode}   setTimingMode={setTimingMode}
         orModel={orModel}     setOrModel={setOrModel}
-        voskReady={voskReady} setVoskReady={setVoskReady}
-        voskModelRef={voskModelRef}
+        gmModel={gmModel}     setGmModel={setGmModel}
+        concurrency={concurrency} setConcurrency={setConcurrency}
+        showMusicMarker={showMusicMarker} setShowMusicMarker={setShowMusicMarker}
       />
 
       <FilesCard
