@@ -179,6 +179,7 @@ export async function dispatchChunks({
 
         sleep(ci % concurrency * staggerMs)
           .then(async () => {
+            const chunkT0 = performance.now()
             onLog(`    ⟳ [${ci + 1}/${chunks.length}] ${t0.toFixed(1)}–${chunk.t1.toFixed(1)}с (${n} сег)`, 'dm')
 
             const prepT0 = performance.now()
@@ -246,6 +247,3 @@ export async function dispatchChunks({
 
   return { allText, fallbackEnds }
 }
-
-// Переменная для chunkT0 — нужна внутри .then цепочки
-const chunkT0Ref = { current: 0 }
