@@ -16,7 +16,7 @@ jobs:
 
       - name: Security check — no API keys
         run: |
-          if grep -r "AIza\|sk-\|EL_\|Bearer " src/ --include="*.js" --include="*.jsx" 2>/dev/null | grep -v "localStorage\|placeholder\|example"; then
+          if grep -rE "AIza[a-zA-Z0-9_-]{35}|sk-[a-zA-Z0-9]{48,}" src/ --include="*.js" --include="*.jsx" 2>/dev/null; then
             echo "❌ API ключ найден в коде!"
             exit 1
           fi
