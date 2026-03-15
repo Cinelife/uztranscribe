@@ -1,7 +1,4 @@
 // App.jsx — v14.0.0
-// Убрано: Vosk, classifierMode, useRmsTiming, useFFT
-// Добавлено: gmModel из dispatcher.js (GEMINI_MODELS)
-
 import { useState, useRef }  from 'react'
 import Header                from './components/Header.jsx'
 import ApiKeysCard           from './components/ApiKeysCard.jsx'
@@ -12,14 +9,13 @@ import TranslationCard       from './components/TranslationCard.jsx'
 import { useBatchRunner }    from './hooks/useBatchRunner.js'
 import { useTranslation }    from './hooks/useTranslation.js'
 import { OR_MODELS }         from './lib/openrouter.js'
-import { GM_DEFAULT_MODEL }  from './lib/dispatcher.js'
+import { GEMINI_MODELS }     from './lib/dispatcher.js'
 
 export default function App() {
   const [elKey, setElKey] = useState(() => localStorage.getItem('uz_el') || '')
   const [gmKey, setGmKey] = useState(() => localStorage.getItem('uz_gm') || '')
   const [orKey, setOrKey] = useState(() => localStorage.getItem('uz_or') || '')
 
-  // ── Основные настройки ──
   const [prov,        setProv]        = useState('gm')
   const [lang,        setLang]        = useState('uz')
   const [chunkSec,    setChunkSec]    = useState(25)
@@ -28,9 +24,9 @@ export default function App() {
   const [mergeGap,    setMergeGap]    = useState(0.6)
   const [mergeMode,   setMergeMode]   = useState('balanced')
   const [dedupWindow, setDedupWindow] = useState(0)
-  const [timingMode,  setTimingMode]  = useState('v12flags')
+  const [timingMode,  setTimingMode]  = useState('v12')
   const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
-  const [gmModel,     setGmModel]     = useState(GM_DEFAULT_MODEL)
+  const [gmModel,     setGmModel]     = useState(GEMINI_MODELS[0].id)
   const [concurrency, setConcurrency] = useState(6)
   const [showMusicMarker, setShowMusicMarker] = useState(false)
 
@@ -63,14 +59,12 @@ export default function App() {
   return (
     <div className="wrap">
       <Header />
-
       <ApiKeysCard
         elKey={elKey} setElKey={setElKey}
         gmKey={gmKey} setGmKey={setGmKey}
         orKey={orKey} setOrKey={setOrKey}
         prov={prov}
       />
-
       <SettingsCard
         prov={prov}           setProv={setProv}
         lang={lang}           setLang={setLang}
@@ -86,12 +80,7 @@ export default function App() {
         concurrency={concurrency} setConcurrency={setConcurrency}
         showMusicMarker={showMusicMarker} setShowMusicMarker={setShowMusicMarker}
       />
-
-      <FilesCard
-        files={files} setFiles={setFiles}
-        fileStatuses={fileStatuses}
-      />
-
+      <FilesCard files={files} setFiles={setFiles} fileStatuses={fileStatuses} />
       <ProgressCard
         log={log}               clearLog={clearLog}
         progress={progress}     progressText={progressText}
@@ -100,7 +89,6 @@ export default function App() {
         running={running}
         onStart={handleStart}   onStop={stopBatch}
       />
-
       <TranslationCard
         trLog={trLog}           clearTrLog={clearTrLog}
         trStatus={trStatus}     trRunning={trRunning}
