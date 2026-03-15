@@ -22,6 +22,11 @@ jobs:
           fi
           echo "✅ API ключи не найдены"
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Install & Build
         run: |
           npm install
