@@ -63,6 +63,7 @@ input[type=file] { color:var(--mu); font-size:11px }
 .kr { display:flex; gap:8px }
 .kr input { flex:1 }
 .r2 { display:grid; grid-template-columns:1fr 1fr; gap:12px }
+.sliders-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:4px }
 
 /* Buttons */
 .btn { padding:7px 14px; border:none; border-radius:7px; font-family:inherit; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; outline:none }
@@ -88,11 +89,16 @@ input[type=file] { color:var(--mu); font-size:11px }
 .pv-bo.on { background:var(--acc) }
 
 /* Timing mode tabs */
-.tm { padding:5px 10px; font-size:11px; background:var(--bg3); color:var(--mu); border:1px solid var(--brd); border-radius:6px }
-.tm.on { color:#fff; border-color:transparent }
-.tm-smart.on { background:#1a3a2a; color:var(--ok); border-color:#2a5a3a !important }
+.tm { padding:5px 10px; font-size:11px; background:var(--bg3); color:var(--mu); border:1px solid var(--brd); border-radius:6px; white-space:nowrap }
+.tm.on { background:var(--acc); color:#fff; border-color:var(--acc2) }
+.tm-smart.on { background:#1a3a2a; color:var(--ok);  border-color:#2a5a3a !important }
+.tm-v12.on   { background:#2a1a4a; color:var(--pur); border-color:#5a2aaa !important }
 .tm-vosk.on  { background:#1a1a4a; color:var(--acc); border-color:#3a3aaa !important }
 .tm-desc { font-size:10px; color:var(--mu); margin-top:6px }
+
+/* Named select class */
+.sel { width:100%; background:var(--bg3); border:1px solid var(--brd); border-radius:6px; padding:8px 10px; color:var(--txt); font-family:inherit; font-size:12px; outline:none; transition:border-color .15s }
+.sel:focus { border-color:var(--acc) }
 
 /* Drop zone */
 .drop { border:2px dashed var(--brd); border-radius:8px; padding:20px; text-align:center; transition:all .15s }
