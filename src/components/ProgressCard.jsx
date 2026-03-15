@@ -1,12 +1,13 @@
 // ProgressCard.jsx — v14.0.0
-// Добавлено: метка даты/времени в каждой строке лога, кнопка скачивания
+// Стиль кнопок как в v12 (по длине текста)
+// Лог: метка времени в отдельной колонке
+// Кнопка скачать лог рядом с очистить
 
 import { useEffect, useRef } from 'react'
 
 function nowStamp() {
   const d = new Date()
-  return d.toLocaleDateString('ru-RU') + ' ' +
-    d.toLocaleTimeString('ru-RU', { hour12: false })
+  return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour12: false })
 }
 
 function buildLogText(log) {
@@ -15,15 +16,15 @@ function buildLogText(log) {
 
 function buildLogFilename(log) {
   const lines  = log.map(e => e.msg).join('\n')
-  const fMatch = lines.match(/▶ \[\d+\/\d+\] (.+?)(?:\s+\(.+?\))*\s*$/)
+  const fMatch = lines.match(/▶ \[\d+\/\d+\] (.+?)\s+\([\d.]+\s*MB\)/)
   const name   = fMatch ? fMatch[1].replace(/\.[^.]+$/, '').trim() : 'log'
   let method   = 'gm'
-  if (/v12.*Segmenter|v12flags/.test(lines)) method = 'v12flags'
-  else if (/Silero/.test(lines))             method = 'silero'
-  else if (/ElevenLabs/.test(lines))         method = 'el'
-  const tMatch  = lines.match(/⏱ ИТОГО: ([\d.,]+с)/)
-  const total   = tMatch ? tMatch[1].replace('.', '_') : ''
-  const stamp   = new Date().toISOString().slice(0,10)
+  if (/метод:v12/.test(lines))          method = 'v12flags'
+  else if (/Smart Silence/.test(lines)) method = 'smart'
+  else if (/ElevenLabs/.test(lines))    method = 'el'
+  const tMatch = lines.match(/⏱ ИТОГО: ([\d.,]+с)/)
+  const total  = tMatch ? tMatch[1].replace('.','_') : ''
+  const stamp  = new Date().toISOString().slice(0,10)
   return [name, method, total, stamp].filter(Boolean).join('_') + '.txt'
 }
 
@@ -54,7 +55,6 @@ export default function ProgressCard({
     <div className="card">
       <div className="ct">Прогресс транскрипции</div>
 
-      {/* Прогресс-бар */}
       <div className="pw">
         <div className="pl">
           <span>{progressText}</span>
@@ -74,38 +74,39 @@ export default function ProgressCard({
         </div>
       </div>
 
-      {/* Лог */}
       <div className="logbox" ref={logRef}>
         {log.length === 0
           ? <span className="log-empty">Лог будет здесь...</span>
           : log.map((e, i) => (
-            <div key={i} className={`log-line log-${e.type || 'dm'}`}>
-              <span style={{ opacity: 0.45, fontSize: 10, marginRight: 6, userSelect: 'none' }}>{e.ts}</span>
-              {e.msg}
+            <div key={i} className={`log-line log-${e.cls || e.type || 'dm'}`}>
+              {e.ts && (
+                <span style={{ opacity: 0.4, fontSize: '0.78em', marginRight: 6, userSelect: 'none', flexShrink: 0 }}>
+                  {e.ts}
+                </span>
+              )}
+              <span>{e.msg}</span>
             </div>
           ))}
       </div>
 
-      {/* Кнопки */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+      {/* Кнопки — по длине текста, как в v12 */}
+      <div className="kr" style={{ marginTop: 10, justifyContent: 'flex-start' }}>
         {!running
-          ? <button className="btn-start" onClick={onStart} style={{ flex: 1 }}>▶ Транскрибировать</button>
-          : <button className="btn-stop"  onClick={onStop}  style={{ flex: 1 }}>■ Остановить</button>
+          ? <button className="btn bc" onClick={onStart}>▶ Транскрибировать</button>
+          : <button className="btn" onClick={onStop} style={{ borderColor: 'var(--er)', color: 'var(--er)' }}>■ Остановить</button>
         }
         <button
+          className="btn"
           onClick={clearLog}
           title="Очистить лог"
-          style={{ padding: '0 14px', borderRadius: 8, border: '1px solid var(--c-brd)', background: 'transparent', color: 'var(--c-dim)', cursor: 'pointer', fontSize: 14 }}
+          style={{ padding: '0 12px' }}
         >🗑</button>
         <button
+          className="btn"
           onClick={downloadLog}
           title="Скачать лог"
-          disabled={log.length === 0}
-          style={{
-            padding: '0 14px', borderRadius: 8, border: '1px solid var(--c-brd)',
-            background: 'transparent', color: log.length ? 'var(--c-acc)' : 'var(--c-dim)',
-            cursor: log.length ? 'pointer' : 'default', fontSize: 14,
-          }}
+          disabled={!log.length}
+          style={{ padding: '0 12px', color: log.length ? 'var(--pu)' : 'var(--mu)' }}
         >⬇</button>
       </div>
     </div>
