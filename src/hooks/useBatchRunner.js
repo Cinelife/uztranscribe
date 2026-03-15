@@ -7,8 +7,8 @@ import { segmentAudio }        from '../lib/segmenter.js'
 import { dispatchChunks }      from '../lib/dispatcher.js'
 import { assemble }            from '../lib/assembler.js'
 import { decodeAudio }         from '../lib/audioUtils.js'
-import { downloadSrt }         from '../lib/srtUtils.js'
-import { transcribeElevenLabs } from '../lib/elevenlabs.js'
+import { buildSrt, downloadSrt } from '../lib/srtUtils.js'
+import { transcribeEL } from '../lib/elevenlabs.js'
 import { transcribeOpenRouter } from '../lib/openrouter.js'
 
 function nowStamp() {
@@ -86,13 +86,12 @@ export function useBatchRunner() {
         try {
           const t0 = performance.now()
           addLog('  ElevenLabs: транскрипция...', 'pu')
-          const srt = await transcribeElevenLabs(file, elKey, lang,
-            (pct, txt) => { setProgress((fi / totalJobs + pct / 100 / totalJobs) * 100); setProgressText(txt) }
-          )
-          const ms  = Math.round(performance.now() - t0)
-          const name = file.name.replace(/\.[^.]+$/, '') + '_el.srt'
-          downloadSrt(srt, name)
-          newSrtMap[name] = srt
+          const segsEL = await transcribeEL(file, elKey, lang, maxChars, addLog)
+          const srtEL  = buildSrt(segsEL)
+          const ms     = Math.round(performance.now() - t0)
+          const name   = file.name.replace(/\.[^.]+$/, '') + '_el.srt'
+          downloadSrt(srtEL, name)
+          newSrtMap[name] = srtEL
           addLog(`  ✓ ElevenLabs | ⏱ ${fmt(ms)}`, 'ok')
         } catch (e) {
           addLog(`  ✗ ElevenLabs: ${e.message}`, 'er')
@@ -107,13 +106,15 @@ export function useBatchRunner() {
           try {
             const t0 = performance.now()
             addLog('  OpenRouter: транскрипция...', 'pu')
-            const srt = await transcribeOpenRouter(file, orKey, orModel, lang, chunkSec, maxChars,
-              (pct, txt) => { setProgressText(txt) }, addLog, stopFlagRef
+            const segsOR = await transcribeOpenRouter(
+              file, orKey, orModel, lang, chunkSec, maxChars,
+              null, addLog, (pct, txt) => setProgressText(txt), stopFlagRef
             )
-            const ms   = Math.round(performance.now() - t0)
-            const name = file.name.replace(/\.[^.]+$/, '') + '_or.srt'
-            downloadSrt(srt, name)
-            newSrtMap[name] = srt
+            const srtOR  = buildSrt(segsOR)
+            const ms     = Math.round(performance.now() - t0)
+            const name   = file.name.replace(/\.[^.]+$/, '') + '_or.srt'
+            downloadSrt(srtOR, name)
+            newSrtMap[name] = srtOR
             addLog(`  ✓ OpenRouter | ⏱ ${fmt(ms)}`, 'ok')
           } catch (e) {
             addLog(`  ✗ OpenRouter: ${e.message}`, 'er')
