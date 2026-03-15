@@ -53,21 +53,26 @@ function getMaxOutputTokens(chunkSec) {
 }
 
 function buildPrompt(segments, langName, chunkDur, chunkSec, dedupWindow, lang) {
-  const n         = segments.length
-  const scriptRule = lang === 'uz' ? '- Script: Latin Uzbek only (not Cyrillic).\n' : ''
-  const dedupRule  = dedupWindow > 0
-    ? '- Repetition is real content, not an error.\n'
-    : '- Do NOT repeat text from previous segments.\n'
+  const n    = segments.length
+  const list = segments.map((s, i) =>
+    `  ${i + 1}. ${s.localStart.toFixed(2)}s – ${s.localEnd.toFixed(2)}s`
+  ).join('\n')
+  const dedupRule = dedupWindow > 0
+    ? '- If audio repeats a phrase — transcribe it again. Repetition is real content, not an error.\n'
+    : '- Do NOT repeat text from previous segments — transcribe only what you hear in THIS clip.\n'
 
   return (
-    `This ${langName} audio clip contains ${n} speech segment${n > 1 ? 's' : ''}.\n` +
-    `Transcribe each segment. Names and proper nouns: write as a native ${langName} speaker would.\n\n` +
-    `Rules:\n` +
-    scriptRule + dedupRule +
-    `- If a segment has any human voice — ALWAYS transcribe the words.\n` +
-    `- Silent or music only — return empty string "".\n` +
-    `- Output: raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
-    `- No timestamps, no markdown, no commentary.\n\n` +
+    `Transcribe this ${langName} audio clip (${chunkDur.toFixed(1)}s).\n\n` +
+    `It has ${n} speech segment(s) at these time ranges:\n` +
+    list + '\n\n' +
+    `Transcription rules:\n` +
+    `- Use full linguistic intelligence: interpret abbreviations, names, terminology correctly.\n` +
+    dedupRule +
+    (lang === 'uz' ? '- Script: Latin Uzbek only (not Cyrillic).\n' : '') +
+    `- Use "" only for completely silent or inaudible segments.\n\n` +
+    `Output format — non-negotiable:\n` +
+    `- Raw JSON array of EXACTLY ${n} strings, one per segment, in order.\n` +
+    `- No skipping, no merging, no extra commentary — only the array.\n\n` +
     `Example: ${JSON.stringify(Array(Math.min(n, 3)).fill('...'))}${n > 3 ? ',...' : ''}`
   )
 }
