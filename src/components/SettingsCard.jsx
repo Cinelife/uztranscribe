@@ -1,56 +1,39 @@
-/**
- * SettingsCard.jsx — v14.0.0
- *
- * Структура:
- *   Провайдер + Язык
- *   ── ФАЗА 1 — Сегментация ──
- *   ── ФАЗА 2 — Dispatch ──
- *   ── ФАЗА 3 — Assembler ──
- *
- * Изменения vs v12.5.4:
- *   - Vosk убран полностью
- *   - ModelSelector (Gemini) с раскрытием вверх
- *   - Цены под списком моделей
- *   - Дедупликация перенесена в Фазу 3
- *   - Classifier убран
- */
+// SettingsCard.jsx — v14.0.0
+// Восстановлен стиль v12 (CSS классы btn/tm/on, var(--pu) etc.)
+// Добавлено: ModelSelector Gemini (GEMINI_MODELS из dispatcher.js), деdup слайдер
+// Убрано: Vosk, classifierMode, RMS/FFT
+// timingMode: 'smart' | 'v12'
 
-import { useState, useRef, useEffect } from 'react'
-import { OR_MODELS }    from '../lib/openrouter.js'
-import { GEMINI_MODELS } from '../lib/dispatcher.js'
+import { useRef, useState } from 'react'
+import { OR_MODELS }         from '../lib/openrouter.js'
+import { GEMINI_MODELS }     from '../lib/dispatcher.js'
 
-const LANGS = [
-  { id: 'uz', label: 'uz Uzbek' },
-  { id: 'ru', label: 'ru Русский' },
-  { id: 'kk', label: 'kk Қазақша' },
-  { id: 'ky', label: 'ky Кыргызча' },
-  { id: 'tg', label: 'tg Тоҷикӣ' },
-  { id: 'tk', label: 'tk Türkmen' },
-  { id: 'en', label: 'en English' },
-  { id: 'tr', label: 'tr Türkçe' },
-]
+const TM_DESC = {
+  smart: 'Авто-поиск тишины в аудио — без зависимостей, работает везде',
+  v12:   'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler (без Vosk)',
+}
 
-// ── Компонент выбора модели Gemini (раскрывается вверх) ───────────────────────
+// ── Компонент выбора модели Gemini (список открывается ВВЕРХ) ─────────────────
 function ModelSelector({ value, onChange }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const selected = GEMINI_MODELS.find(m => m.id === value) || GEMINI_MODELS[0]
 
-  useEffect(() => {
-    function onClickOutside(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', onClickOutside)
-    return () => document.removeEventListener('mousedown', onClickOutside)
-  }, [])
+  // Закрытие по клику снаружи
+  const onBlur = (e) => {
+    if (ref.current && !ref.current.contains(e.relatedTarget)) setOpen(false)
+  }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      {/* Открытый список — рендерится выше кнопки */}
+    <div ref={ref} style={{ position: 'relative' }} onBlur={onBlur}>
+      {/* Список — открывается вверх */}
       {open && (
         <div style={{
-          position: 'absolute', bottom: '100%', left: 0, right: 0,
-          background: 'var(--c-bg2)', border: '1px solid var(--c-brd)',
-          borderRadius: '8px 8px 0 0', overflow: 'hidden',
-          boxShadow: '0 -4px 12px rgba(0,0,0,.3)', zIndex: 100,
+          position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 100,
+          background: 'var(--bg2, var(--bg3))',
+          border: '1px solid var(--brd)',
+          borderRadius: '8px 8px 0 0',
+          overflow: 'hidden',
           marginBottom: 1,
         }}>
           {[...GEMINI_MODELS].reverse().map(m => (
@@ -59,45 +42,49 @@ function ModelSelector({ value, onChange }) {
               onClick={() => { onChange(m.id); setOpen(false) }}
               style={{
                 display: 'block', width: '100%', textAlign: 'left',
-                padding: '9px 14px', border: 'none', cursor: 'pointer',
-                background: m.id === value ? 'var(--c-acc)' : 'transparent',
-                color: m.id === value ? '#fff' : 'var(--c-txt)',
-                fontSize: 13,
-                borderBottom: '1px solid var(--c-brd)',
+                padding: '8px 12px', border: 'none', cursor: 'pointer',
+                background: m.id === value ? 'var(--pu)' : 'transparent',
+                color: m.id === value ? '#fff' : 'var(--txt)',
+                fontSize: '0.82em',
+                borderBottom: '1px solid var(--brd)',
               }}
             >
               <span style={{ fontWeight: 500 }}>{m.label}</span>
-              <span style={{ float: 'right', fontSize: 11, opacity: 0.7 }}>
-                ♪${m.audioIn} · T${m.out}
+              <span style={{ float: 'right', opacity: 0.6, fontSize: '0.9em' }}>
+                ♪${m.audioIn} · out${m.out}
               </span>
             </button>
           ))}
-          {/* Пояснение цен */}
-          <div style={{ padding: '7px 14px', fontSize: 10, color: 'var(--c-dim)', lineHeight: 1.5, background: 'var(--c-bg1)' }}>
-            ♪ = аудио-input &nbsp;·&nbsp; T = output &nbsp;·&nbsp; цены в $ за 1 млн токенов
+          <div style={{
+            padding: '5px 12px', fontSize: '0.72em', color: 'var(--mu)',
+            background: 'var(--bg3)', lineHeight: 1.4,
+          }}>
+            ♪ = аудио-input &nbsp;·&nbsp; out = output &nbsp;·&nbsp; $ за 1 млн токенов
           </div>
         </div>
       )}
 
-      {/* Кнопка-триггер */}
+      {/* Кнопка-триггер — стиль v12 */}
       <button
         onClick={() => setOpen(o => !o)}
+        className="btn"
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '8px 14px', border: '1px solid var(--c-brd)',
-          borderRadius: open ? '0 0 8px 8px' : 8,
-          background: 'var(--c-bg2)', color: 'var(--c-txt)',
-          cursor: 'pointer', fontSize: 13, fontWeight: 500,
+          width: '100%', display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', padding: '7px 12px',
+          borderRadius: open ? '0 0 6px 6px' : '6px',
+          fontSize: '0.82em', fontWeight: 500,
+          background: 'var(--bg3)', color: 'var(--txt)',
+          border: '1px solid var(--brd)', cursor: 'pointer',
         }}
       >
         <span>{selected.label}</span>
-        <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>
-          ♪${selected.audioIn}/M &nbsp; {open ? '▼' : '▲'}
+        <span style={{ fontSize: '0.85em', color: 'var(--pu)', marginLeft: 8 }}>
+          ♪${selected.audioIn}/M &nbsp;{open ? '▼' : '▲'}
         </span>
       </button>
 
       {/* Рекомендация */}
-      <div style={{ fontSize: 10, color: 'var(--c-dim)', marginTop: 4, paddingLeft: 2 }}>
+      <div style={{ fontSize: '0.72em', color: 'var(--mu)', marginTop: 3 }}>
         {value === GEMINI_MODELS[GEMINI_MODELS.length - 1].id
           ? '⭐ Рекомендуется для сложного контента'
           : value === GEMINI_MODELS[0].id
@@ -108,210 +95,166 @@ function ModelSelector({ value, onChange }) {
   )
 }
 
-// ── Вспомогательные компоненты ────────────────────────────────────────────────
-function SectionHead({ title, phase }) {
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      margin: '18px 0 10px', borderTop: '1px solid var(--c-brd)', paddingTop: 14,
-    }}>
-      {phase && (
-        <span style={{
-          fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
-          background: 'var(--c-acc)', color: '#fff',
-          borderRadius: 4, padding: '2px 7px',
-        }}>{phase}</span>
-      )}
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-dim)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        {title}
-      </span>
-    </div>
-  )
-}
-
-function SliderRow({ label, value, min, max, step = 1, fmt, onChange, hint }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
-        <span style={{ color: 'var(--c-txt)' }}>{label}</span>
-        <span style={{ color: 'var(--c-acc)', fontWeight: 500 }}>{fmt ? fmt(value) : value}</span>
-      </div>
-      {hint && <div style={{ fontSize: 10, color: 'var(--c-dim)', marginBottom: 4 }}>{hint}</div>}
-      <input
-        type="range" min={min} max={max} step={step} value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        style={{ width: '100%' }}
-      />
-    </div>
-  )
-}
-
-function BtnGroup({ options, value, onChange }) {
-  return (
-    <div style={{ display: 'flex', gap: 6 }}>
-      {options.map(o => (
-        <button
-          key={o.id}
-          onClick={() => onChange(o.id)}
-          style={{
-            flex: 1, padding: '6px 4px', borderRadius: 6, border: '1px solid',
-            borderColor: value === o.id ? 'var(--c-acc)' : 'var(--c-brd)',
-            background: value === o.id ? 'var(--c-acc)' : 'transparent',
-            color: value === o.id ? '#fff' : 'var(--c-txt)',
-            fontSize: 12, cursor: 'pointer', fontWeight: value === o.id ? 600 : 400,
-          }}
-        >{o.label}</button>
-      ))}
-    </div>
-  )
-}
-
 // ── Главный компонент ─────────────────────────────────────────────────────────
 export default function SettingsCard({
-  prov, setProv, lang, setLang,
-  chunkSec, setChunkSec,
-  maxChars, setMaxChars,
-  minPause, setMinPause,
-  mergeGap, setMergeGap,
-  mergeMode, setMergeMode,
+  prov, setProv,
+  lang, setLang,
+  chunkSec,    setChunkSec,
+  maxChars,    setMaxChars,
+  minPause,    setMinPause,
+  mergeGap,    setMergeGap,
+  mergeMode,   setMergeMode,
   dedupWindow, setDedupWindow,
-  timingMode, setTimingMode,
-  gmModel, setGmModel,
-  orModel, setOrModel,
+  timingMode,  setTimingMode,
+  gmModel,     setGmModel,
+  orModel,     setOrModel,
   concurrency, setConcurrency,
   showMusicMarker, setShowMusicMarker,
 }) {
-  const isGemini = prov === 'gm' || prov === 'all'
-  const isOR     = prov === 'or' || prov === 'all'
+  const isGmPath = prov === 'gm' || prov === 'bo'
 
   return (
     <div className="card">
       <div className="ct">Настройки транскрипции</div>
 
       {/* ── Провайдер + Язык ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 4 }}>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Провайдер</div>
-          <BtnGroup
-            options={[
-              { id: 'el',  label: 'ElevenLabs' },
-              { id: 'gm',  label: 'Gemini' },
-              { id: 'or',  label: 'OpenRouter' },
-              { id: 'all', label: 'Все' },
-            ]}
-            value={prov} onChange={setProv}
-          />
+      <div className="kr" style={{ marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <label>Провайдер</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[['el','ElevenLabs'],['gm','Gemini'],['or','OpenRouter'],['bo','Все']].map(([v,l]) => (
+              <button key={v} className={`btn tm${prov===v?' on':''}`}
+                onClick={() => setProv(v)} style={{ flex: 1 }}>{l}</button>
+            ))}
+          </div>
         </div>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Язык</div>
-          <select
-            value={lang} onChange={e => setLang(e.target.value)}
-            style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--c-brd)', background: 'var(--c-bg2)', color: 'var(--c-txt)', fontSize: 13 }}
-          >
-            {LANGS.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+        <div style={{ flex: 1 }}>
+          <label>Язык</label>
+          <select className="sel" value={lang} onChange={e => setLang(e.target.value)}>
+            {[['uz','uz Uzbek'],['ru','ru Русский'],['kk','kk Қазақша'],['ky','ky Кыргызча'],
+              ['tg','tg Тоҷикӣ'],['tk','tk Türkmen'],['en','en English'],['tr','tr Türkçe']
+            ].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
       </div>
 
-      {/* ── ФАЗА 1 — Сегментация ── */}
-      <SectionHead phase="ФАЗА 1" title="Сегментация" />
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6 }}>Метод тайм-кодов</div>
-        <BtnGroup
-          options={[
-            { id: 'smart',  label: '⚡ Smart Silence' },
-            { id: 'v12flags', label: '🚩 v12 Flags' },
-          ]}
-          value={timingMode} onChange={setTimingMode}
-        />
-        <div style={{ fontSize: 10, color: 'var(--c-dim)', marginTop: 4 }}>
-          {timingMode === 'v12flags'
-            ? 'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно)'
-            : 'Smart Silence: RMS поиск тишины → чанки → Gemini'}
-        </div>
-      </div>
-
-      <SliderRow
-        label="Размер чанка" value={chunkSec} min={10} max={60} step={5}
-        fmt={v => v + 'с'} onChange={setChunkSec}
-        hint="Длина одного запроса к Gemini"
-      />
-      <SliderRow
-        label="Мин. пауза" value={minPause} min={100} max={800} step={50}
-        fmt={v => v + 'мс'} onChange={setMinPause}
-        hint="< 400мс → VAD режет слова. Рекомендуется 250–400мс"
-      />
-
-      {/* ── ФАЗА 2 — Dispatch ── */}
-      <SectionHead phase="ФАЗА 2" title="Dispatch → Gemini" />
-
-      {(isGemini) && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Модель Gemini</div>
+      {/* ── Модель Gemini ── */}
+      {isGmPath && (
+        <div style={{ marginBottom: 10 }}>
+          <label>Модель Gemini</label>
           <ModelSelector value={gmModel} onChange={setGmModel} />
         </div>
       )}
 
-      {isOR && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Модель OpenRouter</div>
-          <select
-            value={orModel} onChange={e => setOrModel(e.target.value)}
-            style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid var(--c-brd)', background: 'var(--c-bg2)', color: 'var(--c-txt)', fontSize: 13 }}
-          >
+      {/* ── Модель OpenRouter ── */}
+      {(prov === 'or' || prov === 'bo') && (
+        <div style={{ marginBottom: 10 }}>
+          <label>Модель OpenRouter</label>
+          <select className="sel" value={orModel} onChange={e => setOrModel(e.target.value)}>
             {OR_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </div>
       )}
 
-      <SliderRow
-        label="Параллельность" value={concurrency} min={1} max={12} step={1}
-        fmt={v => '×' + v} onChange={setConcurrency}
-        hint="Количество одновременных запросов"
-      />
+      {/* ── Метод тайм-кодов ── */}
+      {prov !== 'el' && (
+        <div style={{ marginTop: 4 }}>
+          <label>Метод тайм-кодов</label>
+          <div className="tmtabs">
+            {[['smart','⚡ Smart Silence'],['v12','🚀 v12 Flags']].map(([v,l]) => (
+              <button key={v} className={`btn tm tm-${v}${timingMode===v?' on':''}`}
+                onClick={() => setTimingMode(v)}>{l}</button>
+            ))}
+          </div>
+          <div className="tm-desc">{TM_DESC[timingMode]}</div>
+        </div>
+      )}
 
-      {/* ── ФАЗА 3 — Assembler ── */}
-      <SectionHead phase="ФАЗА 3" title="Assembler → SRT" />
-
-      <SliderRow
-        label="Макс. символов на строку" value={maxChars} min={20} max={120} step={5}
-        fmt={v => v + ' симв.'} onChange={setMaxChars}
-      />
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 11, color: 'var(--c-dim)', marginBottom: 6 }}>Режим сборки строк</div>
-        <BtnGroup
-          options={[
-            { id: 'strict',   label: '⚡ Строгий' },
-            { id: 'balanced', label: '⚖ Балансный' },
-            { id: 'sentence', label: '✦ По фразам' },
-          ]}
-          value={mergeMode} onChange={setMergeMode}
-        />
+      {/* ── Размер чанка + Мин. пауза (v12) ── */}
+      <div className="sliders-row">
+        <div>
+          <label>Размер чанка: <strong style={{color:'var(--pu)'}}>{chunkSec}с</strong></label>
+          <input type="range" min="10" max="60" step="5" value={chunkSec}
+            onChange={e => setChunkSec(Number(e.target.value))} />
+        </div>
+        {timingMode === 'v12' && (
+          <div>
+            <label>Мин. пауза: <strong style={{color:'var(--pu)'}}>{minPause}мс</strong>
+              <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ меньше сег</span>
+            </label>
+            <input type="range" min="100" max="800" step="50" value={minPause}
+              onChange={e => setMinPause(Number(e.target.value))} />
+          </div>
+        )}
       </div>
 
-      <SliderRow
-        label="Слияние gap" value={mergeGap} min={0.1} max={2.0} step={0.1}
-        fmt={v => v.toFixed(1) + 'с'} onChange={setMergeGap}
-        hint="Макс. зазор между сегментами для склейки"
-      />
+      {/* ── Параллельность ── */}
+      {isGmPath && (
+        <div className="sliders-row">
+          <div>
+            <label>Параллельность: <strong style={{color:'var(--pu)'}}>{concurrency}</strong>
+              <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ быстрее</span>
+            </label>
+            <input type="range" min="1" max="12" step="1" value={concurrency}
+              onChange={e => setConcurrency(Number(e.target.value))} />
+          </div>
+        </div>
+      )}
 
-      <SliderRow
-        label="Дедупликация" value={dedupWindow} min={0} max={20} step={1}
-        fmt={v => v === 0 ? 'выкл' : 'окно ' + v} onChange={setDedupWindow}
-        hint="Скользящее окно для удаления повторов. 0 = выкл"
-      />
+      {/* ── Assembler ── */}
+      <div className="sliders-row">
+        <div>
+          <label>Макс. символов на строку: <strong style={{color:'var(--txt)'}}>{maxChars}</strong></label>
+          <input type="range" min="30" max="160" step="5" value={maxChars}
+            onChange={e => setMaxChars(Number(e.target.value))} />
+        </div>
+        <div>
+          <label>Дедупликация: <strong style={{color: dedupWindow===0?'var(--er)':'var(--pu)'}}>
+            {dedupWindow===0?'✗ выкл':`окно ${dedupWindow}`}
+          </strong></label>
+          <input type="range" min="0" max="20" step="1" value={dedupWindow}
+            onChange={e => setDedupWindow(Number(e.target.value))} />
+        </div>
+      </div>
 
-      {/* ── Дополнительно ── */}
-      <SectionHead title="Дополнительно" />
-      <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer' }}>
-        <input
-          type="checkbox" checked={showMusicMarker}
-          onChange={e => setShowMusicMarker(e.target.checked)}
-        />
-        ♪ Показывать музыкальные блоки в SRT
-      </label>
+      {/* ── Слияние (v12) ── */}
+      {timingMode === 'v12' && (
+        <>
+          <div className="sliders-row">
+            <div>
+              <label>Слияние gap: <strong style={{color:'var(--pu)'}}>{mergeGap}с</strong>
+                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>↑ длиннее строки</span>
+              </label>
+              <input type="range" min="0.2" max="2.0" step="0.1" value={mergeGap}
+                onChange={e => setMergeGap(Number(e.target.value))} />
+            </div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
+              Режим сборки строк:
+            </label>
+            <div style={{ display:'flex', gap:'8px' }}>
+              {[['strict','✂ Строгий'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']].map(([v,l]) => (
+                <button key={v} className={`btn tm${mergeMode===v?' on':''}`}
+                  onClick={() => setMergeMode(v)} style={{fontSize:'0.75em',padding:'4px 10px'}}>{l}</button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── ♪ Музыка ── */}
+      {isGmPath && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            className={`btn tm${showMusicMarker?' on':''}`}
+            onClick={() => setShowMusicMarker(v => !v)}
+            style={{ fontSize:'0.75em' }}
+          >
+            ♪ {showMusicMarker ? 'Показывать музыкальные блоки' : 'Скрывать музыкальные блоки'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
