@@ -24,7 +24,7 @@ export default function App() {
   const [mergeGap,    setMergeGap]    = useState(0.6)
   const [mergeMode,   setMergeMode]   = useState('balanced')
   const [dedupWindow, setDedupWindow] = useState(0)
-  const [timingMode,  setTimingMode]  = useState('v12')
+  const [timingMode,  setTimingMode]  = useState('v12') // 'smart' | 'v12' | 'silero'
   const [orModel,     setOrModel]     = useState(OR_MODELS[0].id)
   const [gmModel,     setGmModel]     = useState(GEMINI_MODELS[0].id)
   const [concurrency, setConcurrency] = useState(6)
