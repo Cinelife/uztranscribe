@@ -8,9 +8,10 @@ import { OR_MODELS }    from '../lib/openrouter.js'
 import { GEMINI_MODELS } from '../lib/dispatcher.js'
 
 const TM_DESC = {
-  smart:  'Авто-поиск тишины в аудио — без зависимостей, работает везде',
-  v12:    'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler',
-  silero: 'Silero VAD: нейросеть (ONNX 1.8MB) → точные границы речи → Multi-audio → Assembler',
+  smart:   'Авто-поиск тишины в аудио — без зависимостей, работает везде',
+  v12:     'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler',
+  silero:  'Silero VAD: нейросеть (ONNX 1.8MB) → точные границы речи → Multi-audio → Assembler',
+  v12rms:  'v12 RMS: micro-сегменты → каждый сегмент = отдельный WAV → один запрос Gemini',
 }
 
 // ── ModelSelector — открывается ВВЕРХ ────────────────────────────────────────
@@ -95,7 +96,7 @@ export default function SettingsCard({
   gmModel, setGmModel,
   orModel, setOrModel,
   concurrency, setConcurrency,
-  showMusicMarker, setShowMusicMarker,
+  batchSize, setBatchSize,
 }) {
   const isGmPath = prov === 'gm' || prov === 'bo'
 
@@ -145,7 +146,7 @@ export default function SettingsCard({
         <div style={{ marginBottom: 8 }}>
           <label>Метод тайм-кодов</label>
           <div className="tmtabs">
-            {[['smart','⚡ Smart Silence'],['v12','🚀 v12 Flags'],['silero','🧠 Silero VAD']].map(([v,l]) => (
+            {[['smart','⚡ Smart Silence'],['v12','🚀 v12 Flags'],['silero','🧠 Silero VAD'],['v12rms','⚡ v12 RMS']].map(([v,l]) => (
               <button key={v} className={`btn tm tm-${v}${timingMode===v?' on':''}`}
                 onClick={() => setTimingMode(v)}>{l}</button>
             ))}
@@ -156,7 +157,7 @@ export default function SettingsCard({
 
       {/* ── Слайдеры: 2 колонки ── */}
       {/*
-          Левая колонка:  Размер чанка | Дедупликация | Режим сборки | ♪
+          Левая колонка:  Размер чанка | Дедупликация | Размер пакета (Silero/v12rms) | Режим сборки
           Правая колонка: Макс. символов | Параллельность | Мин. пауза | Слияние gap
       */}
       <div className="r2" style={{ alignItems: 'start' }}>
@@ -175,13 +176,22 @@ export default function SettingsCard({
             <input type="range" min="0" max="20" step="1" value={dedupWindow}
               onChange={e => setDedupWindow(Number(e.target.value))} />
           </div>
-          {(timingMode === 'v12' || timingMode === 'silero') && (
+          {(timingMode === 'silero' || timingMode === 'v12rms') && (
+            <div>
+              <label>Размер пакета: <strong style={{color:'var(--pu)'}}>{batchSize} сег</strong>
+                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>inline_data за запрос</span>
+              </label>
+              <input type="range" min="1" max="40" step="1" value={batchSize}
+                onChange={e => setBatchSize(Number(e.target.value))} />
+            </div>
+          )}
+          {(timingMode === 'v12' || timingMode === 'silero' || timingMode === 'v12rms') && (
             <div>
               <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
                 Режим сборки строк:
               </label>
               <div style={{ display:'flex', gap:'6px' }}>
-                {(timingMode === 'silero'
+                {(timingMode === 'silero' || timingMode === 'v12rms'
                   ? [['vad','📍 По VAD'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']]
                   : [['strict','✂ Строгий'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']]
                 ).map(([v,l]) => (
@@ -190,17 +200,6 @@ export default function SettingsCard({
                     style={{ fontSize:'0.72em', padding:'4px 8px', flex: 1 }}>{l}</button>
                 ))}
               </div>
-            </div>
-          )}
-          {isGmPath && (
-            <div>
-              <button
-                className={`btn tm${showMusicMarker?' on':''}`}
-                onClick={() => setShowMusicMarker(v => !v)}
-                style={{ fontSize:'0.75em' }}
-              >
-                ♪ {showMusicMarker ? 'Показывать ♪ блоки' : 'Скрывать ♪ блоки'}
-              </button>
             </div>
           )}
         </div>
@@ -221,7 +220,7 @@ export default function SettingsCard({
                 onChange={e => setConcurrency(Number(e.target.value))} />
             </div>
           )}
-          {timingMode === 'v12' && (
+          {(timingMode === 'v12' || timingMode === 'v12rms') && (
             <>
               <div>
                 <label>Мин. пауза: <strong style={{color:'var(--pu)'}}>{minPause}мс</strong>
@@ -243,6 +242,12 @@ export default function SettingsCard({
             <div style={{fontSize:'0.75em',color:'var(--mu)',padding:'8px 10px',background:'var(--bg3)',borderRadius:6,border:'1px solid var(--brd)',lineHeight:1.7}}>
               🧠 Silero VAD автоматически определяет границы речи.<br/>
               Регуляторы пауз не нужны — нейросеть делает это точнее.
+            </div>
+          )}
+          {timingMode === 'v12rms' && (
+            <div style={{fontSize:'0.75em',color:'var(--mu)',padding:'8px 10px',background:'var(--bg3)',borderRadius:6,border:'1px solid var(--brd)',lineHeight:1.7}}>
+              ⚡ v12 micro-сегменты как отдельные WAV файлы.<br/>
+              Каждый сегмент обрабатывается независимо — нет дрейфа таймкода.
             </div>
           )}
         </div>
