@@ -253,7 +253,8 @@ input[type=password]:focus { border-color: #7c3aed; }
     <div class="lbl" style="margin-bottom:0">ЛОГ</div>
     <div class="log-actions">
       <button class="btn-log" onclick="clearLog()">✕ ОЧИСТИТЬ</button>
-      <button class="btn-log" onclick="downloadLog()">⬇ СКАЧАТЬ</button>
+      <button class="btn-log" onclick="downloadLog()">⬇ ЛОГ</button>
+        <button class="btn-log" onclick="downloadSrt()" style="color:#4ade80;border-color:#166534">⬇ SRT</button>
     </div>
   </div>
   <div class="log-box" id="logBox"></div>
@@ -549,7 +550,7 @@ function buildPrompt(n){
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
-let logLines=[]
+let logLines=[], lastParsed=[], lastSegsCopy=[]
 function push(msg,type='info'){
   logLines.push({msg,type})
   const box=document.getElementById('logBox');box.style.display='block'
@@ -558,6 +559,24 @@ function push(msg,type='info'){
   line.style.color=LOG_C[type]||LOG_C.info
   line.style.fontSize=type==='dim'?'10px':'11px'
   line.textContent=msg;box.appendChild(line);box.scrollTop=box.scrollHeight
+}
+function downloadSrt(){
+  if(!lastParsed.length){alert('Нет результатов — запусти тест');return}
+  const fmt=t=>{
+    const h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=Math.floor(t%60),ms=Math.round((t%1)*1000)
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+','+String(ms).padStart(3,'0')
+  }
+  let srt='', idx=1
+  lastSegsCopy.slice(0,lastParsed.length).forEach((seg,i)=>{
+    const text=(lastParsed[i]||'').trim()
+    if(!text)return
+    srt+=idx+'\n'+fmt(seg.start)+' --> '+fmt(seg.end)+'\n'+text+'\n\n'
+    idx++
+  })
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([srt],{type:'text/plain;charset=utf-8'}))
+  a.download='exp_'+currentMode+'_'+currentModel+'_'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.srt'
+  a.click()
 }
 function clearLog(){logLines=[];document.getElementById('logBox').innerHTML='';document.getElementById('verdict').style.display='none'}
 function downloadLog(){
@@ -646,6 +665,7 @@ async function runTest(){
     }catch(_){const m=text.match(/\[[\s\S]*\]/);if(m)try{parsed=JSON.parse(m[0])}catch(_){}}
 
     if(parsed&&Array.isArray(parsed)){
+      lastParsed=[...parsed]; lastSegsCopy=[...segments]
       const match=parsed.length===n
       push(`✓ Распарсено: ${parsed.length}/${n} ${match?'✓':'⚠'}`,match?'ok':'warn')
       parsed.forEach((t,i)=>push(`  [${i+1}] "${t}"`,t?'result':'dim'))
