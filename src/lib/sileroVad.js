@@ -159,7 +159,7 @@ async function runVAD(samples16k) {
 }
 
 // ── groupIntoChunks для multi-audio (макс BATCH_SIZE сегментов в пакете) ──────
-const BATCH_SIZE = 18  // Gemini стабильно обрабатывает до ~20 inline_data
+const BATCH_SIZE = 10  // оптимум: меньше WAV → модель держит контекст
 
 function groupIntoBatches(segments) {
   const batches = []
