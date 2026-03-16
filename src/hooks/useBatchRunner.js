@@ -141,11 +141,12 @@ export function useBatchRunner() {
             setVoskVisible(false)
             // Группируем в пакеты по batchSize из UI
             const speechOnly = segments.filter(s => s.type === 'speech')
+            const _bSz = (typeof batchSize === 'number' && batchSize > 0) ? batchSize : 10
             const batches = []
-            for (let bi = 0; bi < speechOnly.length; bi += batchSize)
-              batches.push(speechOnly.slice(bi, bi + batchSize))
+            for (let bi = 0; bi < speechOnly.length; bi += _bSz)
+              batches.push(speechOnly.slice(bi, bi + _bSz))
             const p1Ms = Math.round(performance.now() - p1T0)
-            addLog(`  Phase 1 ✓ — raw:${rawCount} | speech:${speechCount} | music:${musicCount} | пакетов:${batches.length} (×${batchSize}) | ⏱ ${fmt(p1Ms)}`, 'ok')
+            addLog(`  Phase 1 ✓ — raw:${rawCount} | speech:${speechCount} | music:${musicCount} | пакетов:${batches.length} (×${_bSz}) | ⏱ ${fmt(p1Ms)}`, 'ok')
 
             if (speechCount === 0) {
               addLog(`  ⚠ Нет речевых сегментов — пропускаем`, 'wa')
@@ -220,11 +221,12 @@ export function useBatchRunner() {
             const allMicro = chRms.flatMap(ch => ch.segments).map(s => ({
               flagId: s.flagId, start: s.start, end: s.end, type: 'speech',
             }))
+            const _batchSz = (typeof batchSize === 'number' && batchSize > 0) ? batchSize : 10
             const microBatches = []
-            for (let bi = 0; bi < allMicro.length; bi += batchSize)
-              microBatches.push(allMicro.slice(bi, bi + batchSize))
+            for (let bi = 0; bi < allMicro.length; bi += _batchSz)
+              microBatches.push(allMicro.slice(bi, bi + _batchSz))
 
-            addLog(`  Phase 2 — Multi-audio (${nRms} сег → ${microBatches.length} пакетов ×${concurrency})...`, 'gm-cl')
+            addLog(`  Phase 2 — Multi-audio (${nRms} сег → ${microBatches.length} пакетов ×${_batchSz})...`, 'gm-cl')
             const p2T0v = performance.now()
             const { textMap: tmRms } = await dispatchMultiAudio({
               audioBuf: audioBufR, segments: allMicro, batches: microBatches,
