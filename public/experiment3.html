@@ -48,6 +48,20 @@ input[type=password]:focus { border-color: #7c3aed; }
 .btn-action:hover { background: #2563eb; }
 .btn-action.purple { background: #7c3aed; }
 .btn-action.purple:hover { background: #6d28d9; }
+.btn-action.yellow { background: #92400e; color: #fef08a; }
+.btn-action.yellow:hover { background: #78350f; }
+.btn-action.yellow.active { background: #ca8a04; color: #fff; border: 2px solid #fbbf24; }
+
+/* MFCC panel */
+.mfcc-panel { background: #0d0a00; border: 1px solid #92400e; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; display: none; }
+.mfcc-panel.show { display: block; }
+.mfcc-panel .panel-title { color: #fbbf24; }
+
+/* Seg row: music (MFCC-1 detected) */
+.seg-row.is-music { background: #1a1200; border-color: #ca8a04; }
+.seg-row.is-music .seg-idx { color: #fbbf24; }
+.seg-row.is-music .seg-dur { color: #ca8a04; }
+.mfcc-badge { font-size: 9px; background: #422006; color: #fbbf24; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
 .panel-info { color: #374151; font-size: 10px; margin-top: 8px; line-height: 1.7; }
 
 /* Marker panel */
@@ -146,10 +160,12 @@ input[type=password]:focus { border-color: #7c3aed; }
 </div>
 
 <!-- v12 RMS panel -->
+<!-- Waveform always visible when file loaded -->
+<canvas id="waveCanvas" style="display:none;width:100%;height:64px;border-radius:4px;background:#040810;margin-bottom:10px;"></canvas>
+
 <div id="rmsPanel" style="display:none">
   <div class="panel">
     <div class="panel-title">v12 RMS Сегментация</div>
-    <canvas id="waveCanvas"></canvas>
     <div class="controls-row">
       <div class="ctrl">
         <label>МИН. ПАУЗА</label>
@@ -173,6 +189,44 @@ input[type=password]:focus { border-color: #7c3aed; }
     </div>
     <div class="panel-info" id="rmsInfo">← Нажми "Сегментировать" после загрузки файла</div>
   </div>
+</div>
+
+<!-- MFCC-1 panel -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+  <button class="btn-action yellow" id="mfccToggleBtn" onclick="toggleMFCC()">🧠 MFCC-1 классификатор: ВЫКЛ</button>
+  <span style="color:#374151;font-size:10px" id="mfccStatus">← включи для анализа музыка/речь</span>
+</div>
+
+<div class="mfcc-panel" id="mfccPanel">
+  <div class="panel-title">🧠 MFCC-1 — КЛАССИФИКАТОР МУЗЫКА / РЕЧЬ</div>
+  <div class="controls-row">
+    <div class="ctrl">
+      <label>ПОРОГ MFCC-1</label>
+      <input type="range" min="-30" max="30" step="1" value="5" id="mfccThresh"
+        oninput="document.getElementById('mfccThreshV').textContent=this.value">
+      <span class="ctrl-val" id="mfccThreshV">5</span>
+    </div>
+    <div class="ctrl">
+      <label>ОКНО УСРЕДНЕНИЯ (МС)</label>
+      <input type="range" min="100" max="2000" step="100" value="500" id="mfccWindow"
+        oninput="document.getElementById('mfccWindowV').textContent=this.value+'мс'">
+      <span class="ctrl-val" id="mfccWindowV">500мс</span>
+    </div>
+    <div class="ctrl">
+      <label>МЕЛ-ФИЛЬТРЫ</label>
+      <input type="range" min="13" max="40" step="1" value="26" id="mfccMels"
+        oninput="document.getElementById('mfccMelsV').textContent=this.value">
+      <span class="ctrl-val" id="mfccMelsV">26</span>
+    </div>
+    <button class="btn-action yellow" onclick="runMFCC()">🧠 Анализировать</button>
+  </div>
+  <div style="margin-top:8px;font-size:10px;color:#374151;line-height:1.7">
+    MFCC-1 = первый кепстральный коэффициент. Музыка (тональная) → высокие значения. Речь → низкие.<br>
+    🟡 <strong style="color:#fbbf24">Жёлтый</strong> = MFCC-1 определил как <em>музыка</em> &nbsp;|&nbsp;
+    🟣 <strong style="color:#a78bfa">Фиолетовый</strong> = RMS сегменты &nbsp;|&nbsp;
+    Перекрытие = оба детектора согласны
+  </div>
+  <div style="margin-top:6px;font-size:10px;color:#fbbf24;font-weight:600" id="mfccResult">← нажми "Анализировать"</div>
 </div>
 
 <!-- Marker settings panel -->
@@ -322,7 +376,8 @@ async function loadFile(f) {
     document.getElementById('promptRow').style.display='flex'
     document.getElementById('runBtn').disabled=false
     renderSegs(); updateAsmPreview()
-    if (currentMode==='v12rms') drawWaveform()
+    document.getElementById('waveCanvas').style.display='block'
+    drawWaveform()  // always draw on load
   } catch(e) { dz.className='dropzone empty'; dz.textContent=`✗ ${e.message}` }
 }
 
@@ -331,7 +386,21 @@ function drawWaveform() {
   const cv=document.getElementById('waveCanvas'), ctx=cv.getContext('2d')
   const W=cv.offsetWidth||800, H=64; cv.width=W; cv.height=H
   const data=audioBuf.getChannelData(0), step=Math.ceil(data.length/W)
+
+  // Background
   ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+
+  // ── MFCC-1 музыкальные регионы (жёлтый фон, под всем остальным) ──
+  if (mfccEnabled && mfccRegions.length) {
+    mfccRegions.forEach(r => {
+      const x0=r.start/duration*W, x1=r.end/duration*W
+      ctx.fillStyle='rgba(202,138,4,0.18)'; ctx.fillRect(x0,0,x1-x0,H)
+      // Жёлтая линия сверху как маркер
+      ctx.fillStyle='rgba(251,191,36,0.7)'; ctx.fillRect(x0,0,x1-x0,3)
+    })
+  }
+
+  // ── Waveform ──
   ctx.strokeStyle='#7c3aed'; ctx.lineWidth=1; ctx.beginPath()
   for(let x=0;x<W;x++){
     let max=0
@@ -340,12 +409,28 @@ function drawWaveform() {
     x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)
   }
   ctx.stroke()
+
+  // ── RMS сегменты (фиолетовый, поверх жёлтого) ──
   segments.forEach((seg,i)=>{
     const x0=seg.start/duration*W, x1=seg.end/duration*W
-    ctx.fillStyle='rgba(124,58,237,0.08)'; ctx.fillRect(x0,0,x1-x0,H)
-    ctx.strokeStyle='#7c3aed'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,H); ctx.stroke()
-    ctx.fillStyle='#a78bfa'; ctx.font='9px monospace'; ctx.fillText(i+1,x0+3,11)
+    // Если перекрывается с MFCC-1 музыкой — другой оттенок
+    const overlap = mfccEnabled && mfccRegions.some(r => r.start < seg.end && r.end > seg.start)
+    ctx.fillStyle = overlap ? 'rgba(251,191,36,0.12)' : 'rgba(124,58,237,0.10)'
+    ctx.fillRect(x0,0,x1-x0,H)
+    ctx.strokeStyle = overlap ? '#fbbf24' : '#7c3aed'
+    ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,H); ctx.stroke()
+    ctx.fillStyle = overlap ? '#fef08a' : '#a78bfa'
+    ctx.font='9px monospace'; ctx.fillText(i+1,x0+3,11)
   })
+
+  // ── MFCC-1 метки (жёлтые номера) ──
+  if (mfccEnabled && mfccSegs.length) {
+    mfccSegs.forEach((s,i) => {
+      const x0=s.start/duration*W
+      ctx.fillStyle='#fbbf24'; ctx.font='bold 9px monospace'
+      ctx.fillText('M'+(i+1), x0+3, H-4)
+    })
+  }
 }
 
 // ── Marker preview canvas ─────────────────────────────────────────────────────
@@ -417,8 +502,242 @@ function runRmsSegment() {
   renderSegs(); drawWaveform()
 }
 
+
+// ── MFCC-1 ───────────────────────────────────────────────────────────────────
+// Build mel filterbank: N_MELS triangular filters from fMin to fMax
+function buildMelFilterbank(fftSize, sr, nMels, fMin=80, fMax=8000) {
+  const hzToMel = f => 2595 * Math.log10(1 + f/700)
+  const melToHz = m => 700 * (Math.pow(10, m/2595) - 1)
+  const melMin = hzToMel(fMin), melMax = hzToMel(fMax)
+  const melPts = Array.from({length: nMels+2}, (_,i) => melMin + i*(melMax-melMin)/(nMels+1))
+  const hzPts  = melPts.map(melToHz)
+  const binPts = hzPts.map(h => Math.floor((fftSize+1) * h / sr))
+  const bank = []
+  for (let m = 1; m <= nMels; m++) {
+    const filt = new Float32Array(fftSize/2)
+    for (let k = binPts[m-1]; k < binPts[m]; k++)
+      filt[k] = (k - binPts[m-1]) / (binPts[m] - binPts[m-1])
+    for (let k = binPts[m]; k <= binPts[m+1] && k < fftSize/2; k++)
+      filt[k] = (binPts[m+1] - k) / (binPts[m+1] - binPts[m])
+    bank.push(filt)
+  }
+  return bank
+}
+
+// Compute MFCC-1 for a frame of samples (after FFT magnitude)
+function computeFrameMFCC1(magnitude, melBank) {
+  const n = melBank.length
+  const logMel = melBank.map(filt => {
+    let energy = 0
+    for (let k = 0; k < filt.length; k++) energy += filt[k] * magnitude[k]
+    return Math.log(Math.max(energy, 1e-10))
+  })
+  // DCT coefficient index 1: MFCC-1 = sum(logMel[m] * cos(π*(m+0.5)/N))
+  let mfcc1 = 0
+  for (let m = 0; m < n; m++) mfcc1 += logMel[m] * Math.cos(Math.PI * 1 * (m + 0.5) / n)
+  return mfcc1
+}
+
+// Simple FFT magnitude (Cooley-Tukey, power of 2)
+function fftMagnitude(samples) {
+  const N = samples.length
+  // real/imag arrays
+  const re = new Float32Array(N), im = new Float32Array(N)
+  for (let i = 0; i < N; i++) re[i] = samples[i]
+  // bit reversal
+  for (let i = 1, j = 0; i < N; i++) {
+    let bit = N >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]] }
+  }
+  // butterfly
+  for (let len = 2; len <= N; len <<= 1) {
+    const ang = -2 * Math.PI / len
+    const wRe = Math.cos(ang), wIm = Math.sin(ang)
+    for (let i = 0; i < N; i += len) {
+      let uRe = 1, uIm = 0
+      for (let j = 0; j < len/2; j++) {
+        const vRe = re[i+j+len/2]*uRe - im[i+j+len/2]*uIm
+        const vIm = re[i+j+len/2]*uIm + im[i+j+len/2]*uRe
+        re[i+j+len/2] = re[i+j]-vRe; im[i+j+len/2] = im[i+j]-vIm
+        re[i+j] += vRe; im[i+j] += vIm
+        const tmp = uRe*wRe - uIm*wIm; uIm = uRe*wIm + uIm*wRe; uRe = tmp
+      }
+    }
+  }
+  const mag = new Float32Array(N/2)
+  for (let i = 0; i < N/2; i++) mag[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i])
+  return mag
+}
+
+// Hamming window
+function hammingWindow(N) {
+  return Float32Array.from({length: N}, (_,n) => 0.54 - 0.46*Math.cos(2*Math.PI*n/(N-1)))
+}
+
+function toggleMFCC() {
+  mfccEnabled = !mfccEnabled
+  const btn = document.getElementById('mfccToggleBtn')
+  const panel = document.getElementById('mfccPanel')
+  btn.textContent = '🧠 MFCC-1 классификатор: ' + (mfccEnabled ? 'ВКЛ' : 'ВЫКЛ')
+  btn.classList.toggle('active', mfccEnabled)
+  panel.classList.toggle('show', mfccEnabled)
+  document.getElementById('mfccStatus').textContent = mfccEnabled
+    ? '← настрой параметры и нажми "Анализировать"'
+    : '← включи для анализа музыка/речь'
+  if (!mfccEnabled) { mfccRegions=[]; mfccSegs=[]; if(audioBuf) drawWaveform() }
+}
+
+function runMFCC() {
+  if (!audioBuf) return
+  const thresh  = +document.getElementById('mfccThresh').value
+  const winMs   = +document.getElementById('mfccWindow').value
+  const nMels   = +document.getElementById('mfccMels').value
+  const sr      = audioBuf.sampleRate
+
+  const FFT_SIZE  = 512
+  const HOP_SIZE  = Math.floor(sr * 0.010)   // 10ms hop
+  const FRAME_SIZE = FFT_SIZE                 // 512 samples = 32ms @ 16kHz
+  const hamming   = hammingWindow(FRAME_SIZE)
+  const melBank   = buildMelFilterbank(FFT_SIZE, sr, nMels)
+  const data      = audioBuf.getChannelData(0)
+
+  // Compute MFCC-1 per hop
+  const mfcc1_frames = []
+  const mfcc1_times  = []
+  for (let offset = 0; offset + FRAME_SIZE < data.length; offset += HOP_SIZE) {
+    const frame = new Float32Array(FRAME_SIZE)
+    for (let i = 0; i < FRAME_SIZE; i++) frame[i] = (data[offset+i]||0) * hamming[i]
+    const mag   = fftMagnitude(frame)
+    const val   = computeFrameMFCC1(mag, melBank)
+    mfcc1_frames.push(val)
+    mfcc1_times.push(offset / sr)
+  }
+
+  // Smooth over window
+  const winFrames = Math.ceil(winMs / 10)  // frames per window
+  const smoothed  = mfcc1_frames.map((_,i) => {
+    const lo = Math.max(0, i - winFrames/2)
+    const hi = Math.min(mfcc1_frames.length, i + winFrames/2)
+    let sum = 0
+    for (let j = lo; j < hi; j++) sum += mfcc1_frames[j]
+    return sum / (hi - lo)
+  })
+
+  // Stats
+  const vals = smoothed.filter(v => isFinite(v))
+  const mean = vals.reduce((a,b)=>a+b,0)/vals.length
+  const std  = Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length)
+  const absThresh = mean + thresh * std / 10  // thresh is -30..30, scale to std
+
+  // Build regions: windows where MFCC-1 > threshold → music
+  mfccRegions = []
+  let inMusic = false, rStart = 0
+  smoothed.forEach((v, fi) => {
+    const t = mfcc1_times[fi]
+    if (!inMusic && v > absThresh) { inMusic = true; rStart = t }
+    else if (inMusic && v <= absThresh) {
+      mfccRegions.push({ start: rStart, end: t, mfcc1_avg: v, isMusic: true })
+      inMusic = false
+    }
+  })
+  if (inMusic) mfccRegions.push({ start: rStart, end: duration, mfcc1_avg: 0, isMusic: true })
+
+  // Merge close regions (gap < 200ms)
+  const merged = []
+  mfccRegions.forEach(r => {
+    if (merged.length && r.start - merged[merged.length-1].end < 0.2)
+      merged[merged.length-1].end = r.end
+    else merged.push({...r})
+  })
+  mfccRegions = merged
+
+  // Build mfccSegs to show in segment list
+  mfccSegs = mfccRegions.map((r,i) => ({
+    start:   +r.start.toFixed(3),
+    end:     +r.end.toFixed(3),
+    isMusic: true,
+    mfcc1:   r.mfcc1_avg.toFixed(2),
+  }))
+
+  const totalMusicSec = mfccSegs.reduce((a,s)=>a+(s.end-s.start),0)
+  const info = `🧠 MFCC-1: порог=${absThresh.toFixed(2)} (mean=${mean.toFixed(2)} σ=${std.toFixed(2)}) | ` +
+    `окно=${winMs}мс | фильтры=${nMels} | ` +
+    `музыка: ${mfccSegs.length} регионов · ${totalMusicSec.toFixed(1)}с`
+
+  document.getElementById('mfccResult').textContent = info
+  push('', 'dim')
+  push('─── MFCC-1 АНАЛИЗ ─────────────────────────────', 'dim')
+  push(info, 'warn')
+  push(`Параметры: thresh_slider=${thresh} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
+  mfccSegs.forEach((s,i) => push(`  [M${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с (${(s.end-s.start).toFixed(2)}с) MFCC-1≈${s.mfcc1}`, 'warn'))
+  push('──────────────────────────────────────────────', 'dim')
+
+  drawWaveform()
+  renderSegsWithMFCC()
+}
+
+function renderSegsWithMFCC() {
+  const list = document.getElementById('segList')
+  list.innerHTML = ''
+  // Combine: first mfccSegs (yellow), then regular segments
+  // Show in time order
+  const allItems = []
+  mfccSegs.forEach(s => allItems.push({...s, _type:'music'}))
+  segments.forEach((s,i) => allItems.push({...s, _idx:i, _type:'speech'}))
+  allItems.sort((a,b) => a.start - b.start)
+
+  document.getElementById('segCount').textContent =
+    `· ${segments.length} сег` + (mfccSegs.length ? ` | 🟡 ${mfccSegs.length} музыка` : '')
+
+  allItems.forEach((s, rowI) => {
+    const row = document.createElement('div')
+    const isM = s._type === 'music'
+    row.className = 'seg-row' + (isM ? ' is-music' : '')
+    if (!isM) { row.draggable = true; row.dataset.idx = s._idx }
+
+    const label  = isM ? `M${mfccSegs.indexOf(s)+1}` : (s._idx+1)
+    const badge  = isM ? `<span class="mfcc-badge">♪ MFCC-1</span>` : ''
+    const delBtn = isM
+      ? `<button class="btn-del" onclick="removeMfccSeg(${mfccSegs.indexOf(s)})" title="Убрать из отправки">×</button>`
+      : `<button class="btn-del" onclick="removeSeg(${s._idx})" ${segments.length<=2?'disabled':''}>×</button>`
+
+    row.innerHTML = `<span class="drag-handle">${isM ? '♪' : '⠿'}</span>` +
+      `<span class="seg-idx">[${label}]</span>` + badge +
+      `<span class="seg-lbl">start</span>` +
+      `<input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.start.toFixed(2)}" ` +
+        (isM ? `oninput="mfccSegs[${mfccSegs.indexOf(s)}].start=+this.value;drawWaveform()"` :
+               `oninput="segments[${s._idx}].start=+this.value;updateDur(${s._idx})"`) + `>` +
+      `<span class="seg-lbl">end</span>` +
+      `<input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.end.toFixed(2)}" ` +
+        (isM ? `oninput="mfccSegs[${mfccSegs.indexOf(s)}].end=+this.value;drawWaveform()"` :
+               `oninput="segments[${s._idx}].end=+this.value;updateDur(${s._idx})"`) + `>` +
+      `<span class="seg-dur">${(s.end-s.start).toFixed(1)}s</span>` +
+      delBtn
+
+    if (!isM) {
+      row.addEventListener('dragstart',e=>{dragSrc=s._idx;setTimeout(()=>row.classList.add('dragging'),0)})
+      row.addEventListener('dragend',()=>{row.classList.remove('dragging');document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'))})
+      row.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'));row.classList.add('drag-over')})
+      row.addEventListener('dragleave',()=>row.classList.remove('drag-over'))
+      row.addEventListener('drop',e=>{e.preventDefault();row.classList.remove('drag-over');const t=+row.dataset.idx;if(dragSrc===null||dragSrc===t)return;const m=segments.splice(dragSrc,1)[0];segments.splice(t,0,m);dragSrc=null;renderSegsWithMFCC()})
+    }
+    list.appendChild(row)
+  })
+}
+
+function removeMfccSeg(i) {
+  mfccSegs.splice(i, 1)
+  mfccRegions.splice(i, 1)
+  renderSegsWithMFCC()
+  drawWaveform()
+  push(`  [M${i+1}] удалён из отправки`, 'dim')
+}
+
 // ── Segments ──────────────────────────────────────────────────────────────────
 function renderSegs() {
+  if (mfccEnabled && mfccSegs.length) { renderSegsWithMFCC(); return }
   const list=document.getElementById('segList'); list.innerHTML=''
   document.getElementById('segCount').textContent=`· ${segments.length} шт`
   segments.forEach((s,i)=>{
@@ -551,6 +870,9 @@ function buildPrompt(n){
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 let logLines=[], lastParsed=[], lastSegsCopy=[]
+let mfccEnabled = false
+let mfccRegions = []   // [{start, end, mfcc1_avg, isMusic}] over full file
+let mfccSegs = []      // detected music segments
 function push(msg,type='info'){
   logLines.push({msg,type})
   const box=document.getElementById('logBox');box.style.display='block'
