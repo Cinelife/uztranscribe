@@ -217,16 +217,17 @@ export function useBatchRunner() {
             const p1Msv = Math.round(performance.now() - p1T0v)
             addLog(`  Phase 1 ✓ — ${nRms} micro-сег | ⏱ ${fmt(p1Msv)}`, 'ok')
 
+            // eslint-disable-next-line no-undef
+            const BATCH_N = 10  // hardcoded fallback — batchSize из App.jsx
             const audioBufR = audioBufCached || await decodeAudio(file)
             const allMicro = chRms.flatMap(ch => ch.segments).map(s => ({
               flagId: s.flagId, start: s.start, end: s.end, type: 'speech',
             }))
-            const _batchSz = (typeof batchSize === 'number' && batchSize > 0) ? batchSize : 10
             const microBatches = []
-            for (let bi = 0; bi < allMicro.length; bi += _batchSz)
-              microBatches.push(allMicro.slice(bi, bi + _batchSz))
+            for (let bi = 0; bi < allMicro.length; bi += BATCH_N)
+              microBatches.push(allMicro.slice(bi, bi + BATCH_N))
 
-            addLog(`  Phase 2 — Multi-audio (${nRms} сег → ${microBatches.length} пакетов ×${_batchSz})...`, 'gm-cl')
+            addLog(`  Phase 2 — Multi-audio (${nRms} сег → ${microBatches.length} пакетов ×${BATCH_N})...`, 'gm-cl')
             const p2T0v = performance.now()
             const { textMap: tmRms } = await dispatchMultiAudio({
               audioBuf: audioBufR, segments: allMicro, batches: microBatches,
