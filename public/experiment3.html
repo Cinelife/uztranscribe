@@ -201,10 +201,10 @@ input[type=password]:focus { border-color: #7c3aed; }
   <div class="panel-title">🧠 MFCC-1 — КЛАССИФИКАТОР МУЗЫКА / РЕЧЬ</div>
   <div class="controls-row">
     <div class="ctrl">
-      <label>ПОРОГ MFCC-1</label>
-      <input type="range" min="-30" max="30" step="1" value="5" id="mfccThresh"
-        oninput="document.getElementById('mfccThreshV').textContent=this.value">
-      <span class="ctrl-val" id="mfccThreshV">5</span>
+      <label>ЧУВСТВИТЕЛЬНОСТЬ %</label>
+      <input type="range" min="0" max="100" step="5" value="20" id="mfccThresh"
+        oninput="document.getElementById('mfccThreshV').textContent=this.value+'%'">
+      <span class="ctrl-val" id="mfccThreshV">20%</span>
     </div>
     <div class="ctrl">
       <label>ОКНО УСРЕДНЕНИЯ (МС)</label>
@@ -214,17 +214,21 @@ input[type=password]:focus { border-color: #7c3aed; }
     </div>
     <div class="ctrl">
       <label>МЕЛ-ФИЛЬТРЫ</label>
-      <input type="range" min="13" max="40" step="1" value="26" id="mfccMels"
+      <input type="range" min="13" max="28" step="1" value="26" id="mfccMels"
         oninput="document.getElementById('mfccMelsV').textContent=this.value">
       <span class="ctrl-val" id="mfccMelsV">26</span>
     </div>
     <button class="btn-action yellow" onclick="runMFCC()">🧠 Анализировать</button>
   </div>
   <div style="margin-top:8px;font-size:10px;color:#374151;line-height:1.7">
-    MFCC-1 = первый кепстральный коэффициент. Музыка (тональная) → высокие значения. Речь → низкие.<br>
-    🟡 <strong style="color:#fbbf24">Жёлтый</strong> = MFCC-1 определил как <em>музыка</em> &nbsp;|&nbsp;
-    🟣 <strong style="color:#a78bfa">Фиолетовый</strong> = RMS сегменты &nbsp;|&nbsp;
-    Перекрытие = оба детектора согласны
+    MFCC-1 детектирует <strong>тональные</strong> звуки: музыка, пение, синус-тоны, 1кГц маркеры.<br>
+    <strong>Чувствительность 0%</strong> = ничего не детектируется &nbsp;·&nbsp;
+    <strong>100%</strong> = детектирует всё тональное включая гласные речи<br>
+    <strong>Рекомендуется 15–30%</strong> для фильтрации муз. интро и маркеров &nbsp;·&nbsp;
+    Макс. фильтры = 28 (лимит FFT 512)<br>
+    🟡 <strong style="color:#fbbf24">Жёлтый</strong> = тональный (MFCC-1 высокий) &nbsp;|&nbsp;
+    🟣 <strong style="color:#a78bfa">Фиолетовый</strong> = RMS речь &nbsp;|&nbsp;
+    Перекрытие = согласны
   </div>
   <div style="margin-top:6px;font-size:10px;color:#fbbf24;font-weight:600" id="mfccResult">← нажми "Анализировать"</div>
 </div>
@@ -591,9 +595,9 @@ function toggleMFCC() {
 
 function runMFCC() {
   if (!audioBuf) return
-  const thresh  = +document.getElementById('mfccThresh').value
+  const sensitivity = +document.getElementById('mfccThresh').value  // 0..100%
   const winMs   = +document.getElementById('mfccWindow').value
-  const nMels   = +document.getElementById('mfccMels').value
+  const nMels   = Math.min(+document.getElementById('mfccMels').value, 28)  // NaN guard
   const sr      = audioBuf.sampleRate
 
   const FFT_SIZE  = 512
@@ -625,11 +629,18 @@ function runMFCC() {
     return sum / (hi - lo)
   })
 
-  // Stats
-  const vals = smoothed.filter(v => isFinite(v))
+  // Stats — sorted percentiles for robust thresholding
+  const vals = smoothed.filter(v => isFinite(v)).sort((a,b)=>a-b)
+  if (!vals.length) { document.getElementById('mfccResult').textContent='✗ NaN — уменьши Мел-фильтры'; return }
+  const p50  = vals[Math.floor(vals.length * 0.50)]
+  const p85  = vals[Math.floor(vals.length * 0.85)]
+  const p95  = vals[Math.floor(vals.length * 0.95)]
   const mean = vals.reduce((a,b)=>a+b,0)/vals.length
   const std  = Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length)
-  const absThresh = mean + thresh * std / 10  // thresh is -30..30, scale to std
+  // sensitivity 0% → threshold=p95 (only extreme peaks)
+  // sensitivity 100% → threshold=p50 (half of signal)
+  // sensitivity 20%  → threshold≈p85 (good default for music intro / markers)
+  const absThresh = p95 - (sensitivity / 100) * (p95 - p50)
 
   // Build regions: windows where MFCC-1 > threshold → music
   mfccRegions = []
@@ -662,15 +673,16 @@ function runMFCC() {
   }))
 
   const totalMusicSec = mfccSegs.reduce((a,s)=>a+(s.end-s.start),0)
-  const info = `🧠 MFCC-1: порог=${absThresh.toFixed(2)} (mean=${mean.toFixed(2)} σ=${std.toFixed(2)}) | ` +
+  const info = `🧠 MFCC-1: чувств=${sensitivity}% → порог=${absThresh.toFixed(2)} | ` +
+    `p50=${p50.toFixed(1)} p85=${p85.toFixed(1)} p95=${p95.toFixed(1)} | ` +
     `окно=${winMs}мс | фильтры=${nMels} | ` +
-    `музыка: ${mfccSegs.length} регионов · ${totalMusicSec.toFixed(1)}с`
+    `тональных: ${mfccSegs.length} регионов · ${totalMusicSec.toFixed(1)}с`
 
   document.getElementById('mfccResult').textContent = info
   push('', 'dim')
   push('─── MFCC-1 АНАЛИЗ ─────────────────────────────', 'dim')
   push(info, 'warn')
-  push(`Параметры: thresh_slider=${thresh} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
+  push(`Параметры: чувствительность=${sensitivity}% | p50=${p50.toFixed(2)} p85=${p85.toFixed(2)} p95=${p95.toFixed(2)} | порог=${absThresh.toFixed(2)} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
   mfccSegs.forEach((s,i) => push(`  [M${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с (${(s.end-s.start).toFixed(2)}с) MFCC-1≈${s.mfcc1}`, 'warn'))
   push('──────────────────────────────────────────────', 'dim')
 
