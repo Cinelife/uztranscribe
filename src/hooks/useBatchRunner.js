@@ -66,6 +66,7 @@ export function useBatchRunner() {
       const fileT0 = performance.now()
       const isSilero = timingMode === 'silero'
       const isV12    = timingMode === 'v12'
+      const isV12RMS = timingMode === 'v12rms'
 
       addLog('', '')
       addLog(`▶ [${fi+1}/${totalJobs}] ${file.name} (${(file.size/1e6).toFixed(1)} MB)`, 'ok')
