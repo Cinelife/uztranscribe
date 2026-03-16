@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Multi-Audio + Marker Test · UzTranscribe</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; min-height: 100vh; }
@@ -62,6 +63,16 @@ input[type=password]:focus { border-color: #7c3aed; }
 .seg-row.is-music .seg-idx { color: #fbbf24; }
 .seg-row.is-music .seg-dur { color: #ca8a04; }
 .mfcc-badge { font-size: 9px; background: #422006; color: #fbbf24; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
+
+/* Silero/BPM detector panel */
+.detector-panel { background: #0a0f1a; border: 1px solid #1e3a2f; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; display: none; }
+.detector-panel.show { display: block; }
+.detector-panel .panel-title { color: #4ade80; }
+.btn-action.green { background: #166534; color: #4ade80; }
+.btn-action.green:hover { background: #14532d; }
+.btn-action.green.active { background: #15803d; border: 2px solid #4ade80; }
+.silero-badge { font-size: 9px; background: #14532d; color: #4ade80; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
+.bpm-badge { font-size: 9px; background: #0c2a2a; color: #14b8a6; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
 .panel-info { color: #374151; font-size: 10px; margin-top: 8px; line-height: 1.7; }
 
 /* Marker panel */
@@ -197,6 +208,63 @@ input[type=password]:focus { border-color: #7c3aed; }
   <span style="color:#374151;font-size:10px" id="mfccStatus">← включи для анализа музыка/речь</span>
 </div>
 
+<!-- ═══ SILERO VAD + BPM DETECTOR ═══════════════════════════════════════════ -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+  <button class="btn-action green" id="sileroToggleBtn" onclick="toggleSilero()">🔊 Silero VAD детектор: ВЫКЛ</button>
+  <span style="color:#374151;font-size:10px" id="sileroStatus">← VAD + RMS energy = музыка/не-речь</span>
+</div>
+
+<div class="detector-panel" id="sileroPanel">
+  <div class="panel-title">🔊 SILERO VAD + BPM/LUFS ДЕТЕКТОР</div>
+  <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.7">
+    <strong style="color:#4ade80">Silero VAD</strong>: non-speech + высокая энергия → музыка |
+    <strong style="color:#14b8a6">BPM/Autocorr</strong>: периодическая огибающая (удары) → музыка |
+    <strong style="color:#a78bfa">LUFS</strong>: сжатый громкий сигнал → музыка
+  </div>
+  <div class="controls-row">
+    <div class="ctrl">
+      <label>VAD ПОРОГ ЭНЕРГИИ</label>
+      <input type="range" min="1" max="30" step="1" value="8" id="sVadEnergy"
+        oninput="document.getElementById('sVadEnergyV').textContent=this.value+'%'">
+      <span class="ctrl-val" id="sVadEnergyV">8%</span>
+    </div>
+    <div class="ctrl">
+      <label>BPM ДИАПАЗОН</label>
+      <select id="sBpmRange" style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px;">
+        <option value="60-180">60–180 BPM (широкий)</option>
+        <option value="80-160" selected>80–160 BPM (поп/клип)</option>
+        <option value="120-180">120–180 BPM (быстрый)</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>BPM ПОРОГ (R²)</label>
+      <input type="range" min="0.1" max="0.9" step="0.05" value="0.35" id="sBpmThresh"
+        oninput="document.getElementById('sBpmThreshV').textContent=this.value">
+      <span class="ctrl-val" id="sBpmThreshV">0.35</span>
+    </div>
+    <div class="ctrl">
+      <label>LUFS ПОРОГ</label>
+      <input type="range" min="-30" max="-6" step="1" value="-18" id="sLufsThresh"
+        oninput="document.getElementById('sLufsThreshV').textContent=this.value+'dB'">
+      <span class="ctrl-val" id="sLufsThreshV">-18dB</span>
+    </div>
+    <div class="ctrl">
+      <label>ОКНО АНАЛИЗА</label>
+      <input type="range" min="500" max="5000" step="500" value="2000" id="sWindowMs"
+        oninput="document.getElementById('sWindowMsV').textContent=this.value+'мс'">
+      <span class="ctrl-val" id="sWindowMsV">2000мс</span>
+    </div>
+    <button class="btn-action green" onclick="runSileroDetector()">🔊 Анализировать</button>
+  </div>
+
+  <!-- Score bars per window -->
+  <div id="sileroScoreBars" style="margin-top:10px;display:none">
+    <div class="lbl" style="margin-bottom:4px">ОЦЕНКИ ПО ОКНАМ (VAD · BPM · LUFS)</div>
+    <canvas id="sileroScoreCanvas" style="width:100%;height:50px;display:block;border-radius:4px;background:#040810;border:1px solid #111827;"></canvas>
+  </div>
+  <div style="margin-top:8px;font-size:10px;color:#4ade80;font-weight:600" id="sileroResult">← нажми "Анализировать"</div>
+</div>
+
 <div class="mfcc-panel" id="mfccPanel">
   <div class="panel-title">🧠 MFCC-1 — КЛАССИФИКАТОР МУЗЫКА / РЕЧЬ</div>
   <div class="controls-row">
@@ -218,13 +286,27 @@ input[type=password]:focus { border-color: #7c3aed; }
         oninput="document.getElementById('mfccMelsV').textContent=this.value">
       <span class="ctrl-val" id="mfccMelsV">26</span>
     </div>
+    <div class="ctrl">
+      <label>ДИСПЕРСИЯ (макс σ)</label>
+      <input type="range" min="0.5" max="8.0" step="0.5" value="3.0" id="mfccVarMax"
+        oninput="document.getElementById('mfccVarMaxV').textContent=this.value">
+      <span class="ctrl-val" id="mfccVarMaxV">3.0</span>
+    </div>
+    <div class="ctrl">
+      <label>МИН. ДЛИТЕЛЬНОСТЬ</label>
+      <input type="range" min="0.1" max="5.0" step="0.1" value="1.0" id="mfccMinDur"
+        oninput="document.getElementById('mfccMinDurV').textContent=this.value+'с'">
+      <span class="ctrl-val" id="mfccMinDurV">1.0с</span>
+    </div>
     <button class="btn-action yellow" onclick="runMFCC()">🧠 Анализировать</button>
   </div>
   <div style="margin-top:8px;font-size:10px;color:#374151;line-height:1.7">
     MFCC-1 детектирует <strong>тональные</strong> звуки: музыка, пение, синус-тоны, 1кГц маркеры.<br>
     <strong>Чувствительность 0%</strong> = ничего не детектируется &nbsp;·&nbsp;
     <strong>100%</strong> = детектирует всё тональное включая гласные речи<br>
-    <strong>Рекомендуется 15–30%</strong> для фильтрации муз. интро и маркеров &nbsp;·&nbsp;
+    <strong>Дисперсия σ</strong> — ключевой параметр: речь прерывистая (σ высокий), музыка устойчивая (σ низкий)<br>
+    Музыка: MFCC-1=[22,23,22,23] σ≈0.5 &nbsp;·&nbsp; Речь: [22,8,3,21,5] σ≈9 — вот настоящий разделитель<br>
+    <strong>Рекомендовано: чувств=20%, σ≤3.0, минДур=1.0с</strong><br>
     Макс. фильтры = 28 (лимит FFT 512)<br>
     🟡 <strong style="color:#fbbf24">Жёлтый</strong> = тональный (MFCC-1 высокий) &nbsp;|&nbsp;
     🟣 <strong style="color:#a78bfa">Фиолетовый</strong> = RMS речь &nbsp;|&nbsp;
@@ -393,6 +475,15 @@ function drawWaveform() {
 
   // Background
   ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+
+  // ── Silero регионы (оранжевый фон, самый нижний слой) ───────────────────────
+  if (sileroEnabled && sileroSegs.length) {
+    sileroSegs.forEach(s => {
+      const x0=s.start/duration*W, x1=s.end/duration*W
+      ctx.fillStyle='rgba(249,115,22,0.13)'; ctx.fillRect(x0,0,x1-x0,H)
+      ctx.fillStyle='rgba(249,115,22,0.7)'; ctx.fillRect(x0,H-3,x1-x0,3)
+    })
+  }
 
   // ── MFCC-1 музыкальные регионы (жёлтый фон, под всем остальным) ──
   if (mfccEnabled && mfccRegions.length) {
@@ -580,6 +671,160 @@ function hammingWindow(N) {
   return Float32Array.from({length: N}, (_,n) => 0.54 - 0.46*Math.cos(2*Math.PI*n/(N-1)))
 }
 
+// ═══ SILERO VAD + BPM + LUFS DETECTOR ════════════════════════════════════════
+let sileroEnabled=false, sileroSegs=[], sileroWindows=[], sileroSession=null
+
+function toggleSilero(){
+  sileroEnabled=!sileroEnabled
+  const btn=document.getElementById('sileroToggleBtn'),panel=document.getElementById('sileroPanel')
+  btn.textContent='🔊 Silero VAD детектор: '+(sileroEnabled?'ВКЛ':'ВЫКЛ')
+  btn.classList.toggle('active',sileroEnabled); panel.classList.toggle('show',sileroEnabled)
+  document.getElementById('sileroStatus').textContent=sileroEnabled?'← настрой и нажми "Анализировать"':'← VAD + RMS energy = музыка/не-речь'
+  if(!sileroEnabled){sileroSegs=[];sileroWindows=[];if(audioBuf)drawWaveform()}
+}
+
+function resampleTo16kLocal(samples,srcRate){
+  if(srcRate===16000)return samples
+  const ratio=16000/srcRate,out=new Float32Array(Math.round(samples.length*ratio))
+  for(let i=0;i<out.length;i++){const pos=i/ratio,lo=Math.floor(pos),hi=Math.min(lo+1,samples.length-1);out[i]=samples[lo]*(1-(pos-lo))+samples[hi]*(pos-lo)}
+  return out
+}
+
+async function runSileroVADLocal(s16){
+  if(!sileroSession){
+    ort.env.wasm.numThreads=1
+    const resp=await fetch('./vad/silero_vad_legacy.onnx')
+    if(!resp.ok)throw new Error('Silero ONNX: HTTP '+resp.status)
+    sileroSession=await ort.InferenceSession.create(new Uint8Array(await resp.arrayBuffer()),{executionProviders:['wasm'],graphOptimizationLevel:'all'})
+    push('  ✓ Silero модель загружена','ok')
+  }
+  const FRAME=512; let h=new Float32Array(128),c=new Float32Array(128); const probs=[]
+  for(let off=0;off+FRAME<=s16.length;off+=FRAME){
+    const out=await sileroSession.run({
+      input:new ort.Tensor('float32',s16.slice(off,off+FRAME),[1,FRAME]),
+      sr:new ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[]),
+      h:new ort.Tensor('float32',h,[2,1,64]),c:new ort.Tensor('float32',c,[2,1,64])
+    })
+    probs.push({t:(off+FRAME)/16000,p:out.output.data[0]});h=out.hn.data;c=out.cn.data
+  }
+  return probs
+}
+
+function computeRmsEnv(samples,sr){
+  const HOP=Math.floor(sr*0.010),env=[]
+  for(let i=0;i+HOP<=samples.length;i+=HOP){
+    let s=0;for(let j=0;j<HOP;j++)s+=samples[i+j]*samples[i+j]
+    env.push({t:(i+HOP/2)/sr,rms:Math.sqrt(s/HOP)})
+  }
+  return env
+}
+
+function detectBPMLocal(vals,hopMs,bMin,bMax){
+  const N=vals.length; if(N<20)return{bpm:0,r2:0}
+  const m=vals.reduce((a,b)=>a+b,0)/N; const x=vals.map(v=>v-m)
+  const r0=x.reduce((a,b)=>a+b*b,0); if(!r0)return{bpm:0,r2:0}
+  let bestR2=0,bestLag=0
+  const lagMin=Math.floor(60000/bMax/hopMs),lagMax=Math.ceil(60000/bMin/hopMs)
+  for(let lag=lagMin;lag<=lagMax&&lag<N;lag++){
+    let rL=0;for(let i=0;i<N-lag;i++)rL+=x[i]*x[i+lag]
+    const r2=rL/r0;if(r2>bestR2){bestR2=r2;bestLag=lag}
+  }
+  return{bpm:bestLag>0?Math.round(60000/(bestLag*hopMs)):0,r2:bestR2}
+}
+
+function computeLUFSLocal(raw,sr){
+  const N=raw.length; if(!N)return -Infinity
+  const hp=new Float32Array(N); hp[0]=raw[0]
+  for(let i=1;i<N;i++)hp[i]=raw[i]-raw[i-1]*0.98
+  const ms=hp.reduce((a,b)=>a+b*b,0)/N
+  return ms>0?10*Math.log10(ms)-0.691:-Infinity
+}
+
+async function runSileroDetector(){
+  if(!audioBuf)return
+  document.getElementById('sileroResult').textContent='⏳ Загружаю Silero и анализирую...'
+  try{
+    const sr=audioBuf.sampleRate,raw=audioBuf.getChannelData(0)
+    const s16=resampleTo16kLocal(raw,sr)
+    const winMs=+document.getElementById('sWindowMs').value
+    const ePct=+document.getElementById('sVadEnergy').value/100
+    const [bMin,bMax]=document.getElementById('sBpmRange').value.split('-').map(Number)
+    const bThresh=+document.getElementById('sBpmThresh').value
+    const lThresh=+document.getElementById('sLufsThresh').value
+
+    push('','dim'); push('─── SILERO VAD + BPM + LUFS ─────────────────────────────','dim')
+    push(`Параметры: energy≥${(ePct*100).toFixed(0)}% | BPM=${bMin}-${bMax} R²≥${bThresh} | LUFS≥${lThresh}dB | win=${winMs}мс`,'dim')
+
+    push('  Phase 1: Silero VAD...','dim')
+    const vadProbs=await runSileroVADLocal(s16)
+    push(`  ✓ ${vadProbs.length} фреймов`,'ok')
+
+    const env=computeRmsEnv(raw,sr)
+    const sortedRms=[...env.map(e=>e.rms)].sort((a,b)=>a-b)
+    const p90=sortedRms[Math.floor(sortedRms.length*0.90)]
+    const eThresh=p90*ePct/0.10
+
+    const winSec=winMs/1000,numWins=Math.ceil(duration/winSec)
+    sileroWindows=[]
+
+    for(let wi=0;wi<numWins;wi++){
+      const t0=wi*winSec,t1=Math.min((wi+1)*winSec,duration)
+      const vInWin=vadProbs.filter(f=>f.t>=t0&&f.t<t1)
+      const nsFrac=vInWin.length?vInWin.filter(f=>f.p<0.5).length/vInWin.length:0
+      const eInWin=env.filter(e=>e.t>=t0&&e.t<t1)
+      const meanRms=eInWin.length?eInWin.reduce((a,b)=>a+b.rms,0)/eInWin.length:0
+      const {bpm,r2:bR2}=detectBPMLocal(eInWin.map(e=>e.rms),10,bMin,bMax)
+      const s0=Math.floor(t0*sr),s1=Math.min(Math.floor(t1*sr),raw.length)
+      const lufs=computeLUFSLocal(raw.slice(s0,s1),sr)
+      const vadScore=(nsFrac>0.6&&meanRms>eThresh)?1:0
+      const bpmScore=bR2>=bThresh?1:0
+      const lufsScore=lufs>=lThresh?1:0
+      const total=vadScore+bpmScore*0.8+lufsScore*0.5
+      sileroWindows.push({t0,t1,nsFrac,meanRms,bpm,bR2,lufs,vadScore,bpmScore,lufsScore,total,isMusic:total>=1.0})
+    }
+
+    sileroSegs=[]
+    let inM=false,sStart=0
+    sileroWindows.forEach(w=>{
+      if(!inM&&w.isMusic){inM=true;sStart=w.t0}
+      else if(inM&&!w.isMusic){sileroSegs.push({start:sStart,end:w.t0});inM=false}
+    })
+    if(inM)sileroSegs.push({start:sStart,end:duration})
+
+    const totSec=sileroSegs.reduce((a,s)=>a+(s.end-s.start),0)
+    const info=`🔊 ${sileroSegs.length} регионов · ${totSec.toFixed(1)}с`
+    document.getElementById('sileroResult').textContent=info
+    push(info,'ok')
+    sileroSegs.forEach((s,i)=>{
+      const w=sileroWindows.find(w=>Math.abs(w.t0-s.start)<winSec)||{}
+      push(`  [S${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с | BPM≈${w.bpm||'?'} LUFS≈${w.lufs?.toFixed(1)||'?'}dB nonSpeech≈${((w.nsFrac||0)*100).toFixed(0)}%`,'ok')
+    })
+    push('─────────────────────────────────────────────────────','dim')
+    drawSileroScores(); drawWaveform(); renderSegs()
+  }catch(e){
+    push('  ✗ '+e.message,'err')
+    document.getElementById('sileroResult').textContent='✗ '+e.message
+  }
+}
+
+function drawSileroScores(){
+  if(!sileroWindows.length)return
+  const cv=document.getElementById('sileroScoreCanvas'),ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800,H=50;cv.width=W;cv.height=H
+  ctx.fillStyle='#040810';ctx.fillRect(0,0,W,H)
+  const bw=W/sileroWindows.length
+  sileroWindows.forEach((w,i)=>{
+    const x=i*bw
+    if(w.vadScore){ctx.fillStyle='rgba(74,222,128,0.5)';ctx.fillRect(x,H*0.6,bw-1,H*0.4)}
+    const bH=w.bR2*H*0.4
+    ctx.fillStyle=`rgba(20,184,166,${w.bpmScore?0.8:0.2})`;ctx.fillRect(x,H*0.6-bH,bw-1,bH)
+    const lN=Math.max(0,Math.min(1,(w.lufs+40)/30))
+    ctx.fillStyle=`rgba(124,58,237,${w.lufsScore?0.8:0.2})`;ctx.fillRect(x,0,bw-1,lN*H*0.5)
+    if(w.isMusic){ctx.fillStyle='rgba(249,115,22,0.9)';ctx.fillRect(x,H-4,bw-1,4)}
+  })
+  document.getElementById('sileroScoreBars').style.display='block'
+}
+
 function toggleMFCC() {
   mfccEnabled = !mfccEnabled
   const btn = document.getElementById('mfccToggleBtn')
@@ -619,50 +864,59 @@ function runMFCC() {
     mfcc1_times.push(offset / sr)
   }
 
-  // Smooth over window
-  const winFrames = Math.ceil(winMs / 10)  // frames per window
-  const smoothed  = mfcc1_frames.map((_,i) => {
-    const lo = Math.max(0, i - winFrames/2)
-    const hi = Math.min(mfcc1_frames.length, i + winFrames/2)
-    let sum = 0
-    for (let j = lo; j < hi; j++) sum += mfcc1_frames[j]
-    return sum / (hi - lo)
+  // ── Вычисляем скользящее окно: MEAN и STD MFCC-1 per window ────────────────
+  // Ключевая идея: музыка = высокий mean + НИЗКИЙ std (устойчивый тон)
+  //                речь   = высокий mean + ВЫСОКИЙ std (гласный→согласный→пауза)
+  const winFrames = Math.ceil(winMs / 10)
+  const windowStats = mfcc1_frames.map((_, i) => {
+    const lo = Math.max(0, i - winFrames)
+    const hi = Math.min(mfcc1_frames.length, i + 1)
+    const slice = mfcc1_frames.slice(lo, hi).filter(v => isFinite(v))
+    if (slice.length < 3) return { mean: 0, std: 999 }
+    const m = slice.reduce((a,b)=>a+b,0) / slice.length
+    const s = Math.sqrt(slice.reduce((a,b)=>a+(b-m)**2,0) / slice.length)
+    return { mean: m, std: s }
   })
 
-  // Stats — sorted percentiles for robust thresholding
-  const vals = smoothed.filter(v => isFinite(v)).sort((a,b)=>a-b)
-  if (!vals.length) { document.getElementById('mfccResult').textContent='✗ NaN — уменьши Мел-фильтры'; return }
-  const p50  = vals[Math.floor(vals.length * 0.50)]
-  const p85  = vals[Math.floor(vals.length * 0.85)]
-  const p95  = vals[Math.floor(vals.length * 0.95)]
-  const mean = vals.reduce((a,b)=>a+b,0)/vals.length
-  const std  = Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length)
-  // sensitivity 0% → threshold=p95 (only extreme peaks)
-  // sensitivity 100% → threshold=p50 (half of signal)
-  // sensitivity 20%  → threshold≈p85 (good default for music intro / markers)
-  const absThresh = p95 - (sensitivity / 100) * (p95 - p50)
+  // Stats for threshold calibration (on mean values only)
+  const meanVals = windowStats.map(w=>w.mean).filter(v=>isFinite(v)).sort((a,b)=>a-b)
+  if (!meanVals.length) { document.getElementById('mfccResult').textContent='✗ NaN — уменьши Мел-фильтры'; return }
+  const p50  = meanVals[Math.floor(meanVals.length * 0.50)]
+  const p85  = meanVals[Math.floor(meanVals.length * 0.85)]
+  const p95  = meanVals[Math.floor(meanVals.length * 0.95)]
+  const mean = meanVals.reduce((a,b)=>a+b,0)/meanVals.length
+  const std  = Math.sqrt(meanVals.reduce((a,b)=>a+(b-mean)**2,0)/meanVals.length)
 
-  // Build regions: windows where MFCC-1 > threshold → music
+  const absThresh = p95 - (sensitivity / 100) * (p95 - p50)
+  const varMax    = +document.getElementById('mfccVarMax').value
+  const minDur    = +document.getElementById('mfccMinDur').value
+
+  // ── Детекция: MFCC-1 > порог AND дисперсия < varMax → тональный регион ────
+  // Это и есть правильный классификатор: высокий + устойчивый = музыка
   mfccRegions = []
-  let inMusic = false, rStart = 0
-  smoothed.forEach((v, fi) => {
-    const t = mfcc1_times[fi]
-    if (!inMusic && v > absThresh) { inMusic = true; rStart = t }
-    else if (inMusic && v <= absThresh) {
-      mfccRegions.push({ start: rStart, end: t, mfcc1_avg: v, isMusic: true })
+  let inMusic = false, rStart = 0, rMfcc = 0
+  windowStats.forEach((w, fi) => {
+    const t        = mfcc1_times[fi]
+    const isTonal  = w.mean > absThresh && w.std <= varMax
+    if (!inMusic && isTonal)  { inMusic = true;  rStart = t; rMfcc = w.mean }
+    else if (inMusic && !isTonal) {
+      mfccRegions.push({ start: rStart, end: t, mfcc1_avg: rMfcc, isMusic: true })
       inMusic = false
     }
   })
-  if (inMusic) mfccRegions.push({ start: rStart, end: duration, mfcc1_avg: 0, isMusic: true })
+  if (inMusic) mfccRegions.push({ start: rStart, end: duration, mfcc1_avg: rMfcc, isMusic: true })
 
-  // Merge close regions (gap < 200ms)
+  // Merge close regions (gap < 150ms)
   const merged = []
   mfccRegions.forEach(r => {
-    if (merged.length && r.start - merged[merged.length-1].end < 0.2)
+    if (merged.length && r.start - merged[merged.length-1].end < 0.15)
       merged[merged.length-1].end = r.end
     else merged.push({...r})
   })
   mfccRegions = merged
+
+  // Min duration filter — последний рубеж против артефактов
+  mfccRegions = mfccRegions.filter(r => (r.end - r.start) >= minDur)
 
   // Build mfccSegs to show in segment list
   mfccSegs = mfccRegions.map((r,i) => ({
@@ -673,7 +927,7 @@ function runMFCC() {
   }))
 
   const totalMusicSec = mfccSegs.reduce((a,s)=>a+(s.end-s.start),0)
-  const info = `🧠 MFCC-1: чувств=${sensitivity}% → порог=${absThresh.toFixed(2)} | ` +
+  const info = `🧠 MFCC-1: чувств=${sensitivity}% σ≤${varMax} minDur≥${minDur}с → порог=${absThresh.toFixed(2)} | ` +
     `p50=${p50.toFixed(1)} p85=${p85.toFixed(1)} p95=${p95.toFixed(1)} | ` +
     `окно=${winMs}мс | фильтры=${nMels} | ` +
     `тональных: ${mfccSegs.length} регионов · ${totalMusicSec.toFixed(1)}с`
@@ -682,7 +936,7 @@ function runMFCC() {
   push('', 'dim')
   push('─── MFCC-1 АНАЛИЗ ─────────────────────────────', 'dim')
   push(info, 'warn')
-  push(`Параметры: чувствительность=${sensitivity}% | p50=${p50.toFixed(2)} p85=${p85.toFixed(2)} p95=${p95.toFixed(2)} | порог=${absThresh.toFixed(2)} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
+  push(`Параметры: чувств=${sensitivity}% | σMax=${varMax} | минДур=${minDur}с | p50=${p50.toFixed(2)} p85=${p85.toFixed(2)} p95=${p95.toFixed(2)} | порог=${absThresh.toFixed(2)} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
   mfccSegs.forEach((s,i) => push(`  [M${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с (${(s.end-s.start).toFixed(2)}с) MFCC-1≈${s.mfcc1}`, 'warn'))
   push('──────────────────────────────────────────────', 'dim')
 
@@ -697,22 +951,26 @@ function renderSegsWithMFCC() {
   // Show in time order
   const allItems = []
   mfccSegs.forEach(s => allItems.push({...s, _type:'music'}))
+  sileroSegs.forEach((s,i) => allItems.push({...s, _sIdx:i, _type:'silero'}))
   segments.forEach((s,i) => allItems.push({...s, _idx:i, _type:'speech'}))
   allItems.sort((a,b) => a.start - b.start)
 
   document.getElementById('segCount').textContent =
-    `· ${segments.length} сег` + (mfccSegs.length ? ` | 🟡 ${mfccSegs.length} музыка` : '')
+    `· ${segments.length} сег` + (mfccSegs.length ? ` | 🟡 ${mfccSegs.length} MFCC` : '') + (sileroSegs.length ? ` | 🟠 ${sileroSegs.length} VAD` : '')
 
   allItems.forEach((s, rowI) => {
     const row = document.createElement('div')
     const isM = s._type === 'music'
-    row.className = 'seg-row' + (isM ? ' is-music' : '')
+    const isS = s._type === 'silero'
+    row.className = 'seg-row' + (isM ? ' is-music' : isS ? '' : '')
     if (!isM) { row.draggable = true; row.dataset.idx = s._idx }
 
-    const label  = isM ? `M${mfccSegs.indexOf(s)+1}` : (s._idx+1)
-    const badge  = isM ? `<span class="mfcc-badge">♪ MFCC-1</span>` : ''
+    const label  = isM ? `M${mfccSegs.indexOf(s)+1}` : isS ? `S${s._sIdx+1}` : (s._idx+1)
+    const badge  = isM ? `<span class="mfcc-badge">♪ MFCC-1</span>` : isS ? `<span class="silero-badge">🔊 VAD</span>` : ''
     const delBtn = isM
       ? `<button class="btn-del" onclick="removeMfccSeg(${mfccSegs.indexOf(s)})" title="Убрать из отправки">×</button>`
+      : isS
+      ? `<button class="btn-del" onclick="sileroSegs.splice(${s._sIdx},1);drawWaveform();renderSegs()" title="Убрать">×</button>`
       : `<button class="btn-del" onclick="removeSeg(${s._idx})" ${segments.length<=2?'disabled':''}>×</button>`
 
     row.innerHTML = `<span class="drag-handle">${isM ? '♪' : '⠿'}</span>` +
