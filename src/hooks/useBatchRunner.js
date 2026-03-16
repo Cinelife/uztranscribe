@@ -46,7 +46,7 @@ export function useBatchRunner() {
     files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode,
     timingMode, dedupWindow = 0,
     elKey, gmKey, orKey, orModel, gmModel = 'gemini-2.5-flash-lite',
-    concurrency = 6, showMusicMarker = false,
+    concurrency = 6, showMusicMarker = false, batchSize = 10,
   }) => {
     if (!files.length) return
     stopFlagRef.current = false
