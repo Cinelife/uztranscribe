@@ -226,31 +226,22 @@ export function assemble(
   // Порядок важен: Merge должен быть ДО hardSplitByWords
   // чтобы итоговые части не склеивались обратно.
 
-  // ── 0. Micro-merge для Silero VAD (mergeMode='vad') ─────────────────────────
-  // Silero создаёт 400–700мс micro-segments (каждое слово отдельно)
-  // Склеиваем короткие с соседями ДО dedup чтобы не терять контекст
+  // ── mergeMode='vad': один VAD сегмент = один субтитр, никакого слияния ────
+  // Пользователь выбрал "По VAD" — assembler НЕ трогает границы.
+  // Каждый flagMap entry это VAD-граница → выводим как есть.
+  // Применяем только hardSplitByWords если текст > maxChars.
   if (mergeMode === 'vad') {
-    const MIN_DUR = 0.75  // сег короче этого → кандидат на склейку
-    let i = 0
-    while (i < allSegs.length) {
-      const seg = allSegs[i]
-      const dur = seg.end - seg.start
-      if (dur < MIN_DUR && i < allSegs.length - 1) {
-        const next = allSegs[i + 1]
-        const gap  = next.start - seg.end
-        if (gap < 0.5) {  // только если сосед близко
-          allSegs[i + 1] = {
-            start: seg.start,
-            end:   next.end,
-            text:  seg.text + ' ' + next.text,
-            type:  next.type,
-          }
-          allSegs.splice(i, 1)
-          continue  // не инкрементируем — проверим свежий сег снова
-        }
-      }
-      i++
+    // Clamp overlaps
+    for (let i = 0; i < allSegs.length - 1; i++) {
+      if (allSegs[i].end > allSegs[i + 1].start - 0.05)
+        allSegs[i].end = Math.max(allSegs[i].start + 0.1, allSegs[i + 1].start - 0.05)
     }
+    // Только hardSplit если текст длиннее maxChars
+    const finalVad = []
+    for (const seg of allSegs) {
+      finalVad.push(...hardSplitByWords(seg, maxChars))
+    }
+    return buildSrt(finalVad)
   }
 
   // ── 1. Dedup ───────────────────────────────────────────────────────────────
@@ -287,7 +278,7 @@ export function assemble(
     merged = musicSegs
   } else {
     let mergedSpeech
-    if (mergeMode === 'balanced' || mergeMode === 'vad')  mergedSpeech = mergeBalanced(speechSegs, maxChars, mergeGap)
+    if (mergeMode === 'balanced')  mergedSpeech = mergeBalanced(speechSegs, maxChars, mergeGap)
     else if (mergeMode === 'sentence')  mergedSpeech = mergeSentence(speechSegs, maxChars, mergeGap)
     else                                mergedSpeech = mergeStrict(speechSegs, maxChars, mergeGap)
 
