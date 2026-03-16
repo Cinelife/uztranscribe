@@ -29,6 +29,7 @@ export default function App() {
   const [gmModel,     setGmModel]     = useState(GEMINI_MODELS[0].id)
   const [concurrency, setConcurrency] = useState(6)
   const [showMusicMarker, setShowMusicMarker] = useState(false)
+  const [batchSize,       setBatchSize]       = useState(10)
 
   const [files,        setFiles]        = useState([])
   const [fileStatuses, setFileStatuses] = useState({})
@@ -53,7 +54,7 @@ export default function App() {
     files, prov, lang, chunkSec, maxChars, minPause, mergeGap, mergeMode,
     timingMode, dedupWindow,
     elKey, gmKey, orKey, orModel, gmModel,
-    concurrency, showMusicMarker,
+    concurrency, showMusicMarker, batchSize,
   })
 
   return (
@@ -79,6 +80,7 @@ export default function App() {
         gmModel={gmModel}     setGmModel={setGmModel}
         concurrency={concurrency} setConcurrency={setConcurrency}
         showMusicMarker={showMusicMarker} setShowMusicMarker={setShowMusicMarker}
+        batchSize={batchSize}           setBatchSize={setBatchSize}
       />
       <FilesCard files={files} setFiles={setFiles} fileStatuses={fileStatuses} />
       <ProgressCard
