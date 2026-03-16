@@ -178,15 +178,18 @@ export default function SettingsCard({
           </div>
           {(timingMode === 'silero' || timingMode === 'v12rms') && (
             <div>
-              <label>Размер пакета: <strong style={{color:'var(--pu)'}}>{batchSize} сег</strong>
-                <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>inline_data за запрос</span>
-              </label>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                <label style={{margin:0}}>Размер пакета
+                  <span style={{fontSize:'0.7em',color:'var(--dm)',marginLeft:'6px'}}>inline_data за запрос</span>
+                </label>
+                <strong style={{color:'var(--pu)', fontSize:13}}>{batchSize} сег</strong>
+              </div>
               <input type="range" min="1" max="40" step="1" value={batchSize}
                 onChange={e => setBatchSize(Number(e.target.value))} />
             </div>
           )}
           {(timingMode === 'v12' || timingMode === 'silero' || timingMode === 'v12rms') && (
-            <div>
+            <div style={{ marginTop: 4 }}>
               <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
                 Режим сборки строк:
               </label>
