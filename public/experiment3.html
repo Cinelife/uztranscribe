@@ -217,9 +217,10 @@ input[type=password]:focus { border-color: #7c3aed; }
 <div class="detector-panel" id="sileroPanel">
   <div class="panel-title">🔊 SILERO VAD + BPM/LUFS ДЕТЕКТОР</div>
   <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.7">
-    <strong style="color:#4ade80">Silero VAD</strong>: non-speech + высокая энергия → музыка |
-    <strong style="color:#14b8a6">BPM/Autocorr</strong>: периодическая огибающая (удары) → музыка |
-    <strong style="color:#a78bfa">LUFS</strong>: сжатый громкий сигнал → музыка
+    <strong style="color:#4ade80">Silero VAD</strong>: non-speech (p&lt;0.5) = не-речь |
+    <strong style="color:#14b8a6">BPM</strong>: автокорреляция огибающей → периодичность ударов → R² ≥ порог → музыка |
+    <strong style="color:#a78bfa">LUFS</strong>: инфо-метрика громкости (муз.продакшн: −14–9dB, запись: −30–50dB)
+    <br><strong style="color:#f97316">Логика: nonSpeech≥60% И (BPM R² ≥ порог)</strong> → музыкальный регион
   </div>
   <div class="controls-row">
     <div class="ctrl">
@@ -243,10 +244,9 @@ input[type=password]:focus { border-color: #7c3aed; }
       <span class="ctrl-val" id="sBpmThreshV">0.35</span>
     </div>
     <div class="ctrl">
-      <label>LUFS ПОРОГ</label>
-      <input type="range" min="-30" max="-6" step="1" value="-18" id="sLufsThresh"
-        oninput="document.getElementById('sLufsThreshV').textContent=this.value+'dB'">
-      <span class="ctrl-val" id="sLufsThreshV">-18dB</span>
+      <label>LUFS (инфо)</label>
+      <span class="ctrl-val" id="sLufsThreshV" style="font-size:10px;color:#4b5563">показывает<br>громкость</span>
+      <input type="hidden" id="sLufsThresh" value="-6">
     </div>
     <div class="ctrl">
       <label>ОКНО АНАЛИЗА</label>
@@ -476,12 +476,23 @@ function drawWaveform() {
   // Background
   ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
 
-  // ── Silero регионы (оранжевый фон, самый нижний слой) ───────────────────────
+  // ── Silero: речевые сегменты (зелёная полоска сверху) ───────────────────────
+  if (sileroEnabled && sileroSpeechSegs.length) {
+    sileroSpeechSegs.forEach(s => {
+      const x0=s.start/duration*W, x1=s.end/duration*W
+      ctx.fillStyle='rgba(74,222,128,0.12)'; ctx.fillRect(x0,0,x1-x0,H)
+      ctx.fillStyle='rgba(74,222,128,0.8)'; ctx.fillRect(x0,0,x1-x0,3)
+    })
+  }
+  // ── Silero: музыкальные регионы (оранжевый, поверх зелёного) ─────────────
   if (sileroEnabled && sileroSegs.length) {
     sileroSegs.forEach(s => {
       const x0=s.start/duration*W, x1=s.end/duration*W
-      ctx.fillStyle='rgba(249,115,22,0.13)'; ctx.fillRect(x0,0,x1-x0,H)
-      ctx.fillStyle='rgba(249,115,22,0.7)'; ctx.fillRect(x0,H-3,x1-x0,3)
+      ctx.fillStyle='rgba(249,115,22,0.20)'; ctx.fillRect(x0,0,x1-x0,H)
+      ctx.fillStyle='rgba(249,115,22,0.9)'; ctx.fillRect(x0,H-4,x1-x0,4)
+      // Label
+      ctx.fillStyle='#fb923c'; ctx.font='bold 9px monospace'
+      ctx.fillText('♪', x0+3, H-6)
     })
   }
 
@@ -672,7 +683,7 @@ function hammingWindow(N) {
 }
 
 // ═══ SILERO VAD + BPM + LUFS DETECTOR ════════════════════════════════════════
-let sileroEnabled=false, sileroSegs=[], sileroWindows=[], sileroSession=null
+let sileroEnabled=false, sileroSegs=[], sileroSpeechSegs=[], sileroWindows=[], sileroSession=null
 
 function toggleSilero(){
   sileroEnabled=!sileroEnabled
@@ -680,7 +691,7 @@ function toggleSilero(){
   btn.textContent='🔊 Silero VAD детектор: '+(sileroEnabled?'ВКЛ':'ВЫКЛ')
   btn.classList.toggle('active',sileroEnabled); panel.classList.toggle('show',sileroEnabled)
   document.getElementById('sileroStatus').textContent=sileroEnabled?'← настрой и нажми "Анализировать"':'← VAD + RMS energy = музыка/не-речь'
-  if(!sileroEnabled){sileroSegs=[];sileroWindows=[];if(audioBuf)drawWaveform()}
+  if(!sileroEnabled){sileroSegs=[];sileroSpeechSegs=[];sileroWindows=[];if(audioBuf)drawWaveform()}
 }
 
 function resampleTo16kLocal(samples,srcRate){
@@ -778,26 +789,41 @@ async function runSileroDetector(){
       const lufs=computeLUFSLocal(raw.slice(s0,s1),sr)
       const vadScore=(nsFrac>0.6&&meanRms>eThresh)?1:0
       const bpmScore=bR2>=bThresh?1:0
-      const lufsScore=lufs>=lThresh?1:0
-      const total=vadScore+bpmScore*0.8+lufsScore*0.5
-      sileroWindows.push({t0,t1,nsFrac,meanRms,bpm,bR2,lufs,vadScore,bpmScore,lufsScore,total,isMusic:total>=1.0})
+      const lufsScore=lufs>=-6?1:0  // info-only, не используется в детекции
+      // Музыка = non-speech И (есть ритм BPM)
+      // Одного VAD недостаточно — паузы тоже non-speech
+      const isMusic = nsFrac>=0.6 && meanRms>eThresh && bR2>=bThresh
+      const total = (isMusic ? 2 : 0)  // for bars viz
+      sileroWindows.push({t0,t1,nsFrac,meanRms,bpm,bR2,lufs,vadScore,bpmScore,lufsScore,total,isMusic})
     }
 
     sileroSegs=[]
     let inM=false,sStart=0
     sileroWindows.forEach(w=>{
       if(!inM&&w.isMusic){inM=true;sStart=w.t0}
-      else if(inM&&!w.isMusic){sileroSegs.push({start:sStart,end:w.t0});inM=false}
+      else if(inM&&!w.isMusic){sileroSegs.push({start:sStart,end:w.t0,type:'music'});inM=false}
     })
-    if(inM)sileroSegs.push({start:sStart,end:duration})
+    if(inM)sileroSegs.push({start:sStart,end:duration,type:'music'})
+
+    // Build VAD speech segments from raw probs for visualization
+    sileroSpeechSegs=[]
+    let inSp=false,spStart=0
+    vadProbs.forEach(f=>{
+      if(!inSp&&f.p>=0.5){inSp=true;spStart=f.t-0.032}
+      else if(inSp&&f.p<0.35){sileroSpeechSegs.push({start:Math.max(0,spStart),end:f.t});inSp=false}
+    })
+    if(inSp)sileroSpeechSegs.push({start:spStart,end:duration})
 
     const totSec=sileroSegs.reduce((a,s)=>a+(s.end-s.start),0)
-    const info=`🔊 ${sileroSegs.length} регионов · ${totSec.toFixed(1)}с`
+    const info=`🔊 ${sileroSegs.length} музык.регион(ов) · ${totSec.toFixed(1)}с | 🗣 ${sileroSpeechSegs.length} речевых сег`
     document.getElementById('sileroResult').textContent=info
     push(info,'ok')
     sileroSegs.forEach((s,i)=>{
       const w=sileroWindows.find(w=>Math.abs(w.t0-s.start)<winSec)||{}
-      push(`  [S${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с | BPM≈${w.bpm||'?'} LUFS≈${w.lufs?.toFixed(1)||'?'}dB nonSpeech≈${((w.nsFrac||0)*100).toFixed(0)}%`,'ok')
+      // Find best window in region (highest BPM R²)
+      const wInRange=sileroWindows.filter(w=>w.t0>=s.start&&w.t0<s.end)
+      const bestW=wInRange.sort((a,b)=>b.bR2-a.bR2)[0]||{}
+      push(`  [S${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с | BPM≈${bestW.bpm||'?'} R²=${bestW.bR2?.toFixed(2)||'?'} LUFS≈${bestW.lufs?.toFixed(1)||'?'}dB nonSpeech≈${((bestW.nsFrac||0)*100).toFixed(0)}%`,'ok')
     })
     push('─────────────────────────────────────────────────────','dim')
     drawSileroScores(); drawWaveform(); renderSegs()
