@@ -8,8 +8,9 @@ import { OR_MODELS }    from '../lib/openrouter.js'
 import { GEMINI_MODELS } from '../lib/dispatcher.js'
 
 const TM_DESC = {
-  smart: 'Авто-поиск тишины в аудио — без зависимостей, работает везде',
-  v12:   'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler (без Vosk)',
+  smart:  'Авто-поиск тишины в аудио — без зависимостей, работает везде',
+  v12:    'v12: Energy segmenter → флаги {CCC$SSS} → Dispatcher (параллельно) → Assembler',
+  silero: 'Silero VAD: нейросеть (ONNX 1.8MB) → точные границы речи → Multi-audio → Assembler',
 }
 
 // ── ModelSelector — открывается ВВЕРХ ────────────────────────────────────────
@@ -144,7 +145,7 @@ export default function SettingsCard({
         <div style={{ marginBottom: 8 }}>
           <label>Метод тайм-кодов</label>
           <div className="tmtabs">
-            {[['smart','⚡ Smart Silence'],['v12','🚀 v12 Flags']].map(([v,l]) => (
+            {[['smart','⚡ Smart Silence'],['v12','🚀 v12 Flags'],['silero','🧠 Silero VAD']].map(([v,l]) => (
               <button key={v} className={`btn tm tm-${v}${timingMode===v?' on':''}`}
                 onClick={() => setTimingMode(v)}>{l}</button>
             ))}
@@ -174,13 +175,16 @@ export default function SettingsCard({
             <input type="range" min="0" max="20" step="1" value={dedupWindow}
               onChange={e => setDedupWindow(Number(e.target.value))} />
           </div>
-          {timingMode === 'v12' && (
+          {(timingMode === 'v12' || timingMode === 'silero') && (
             <div>
               <label style={{fontSize:'0.75em',color:'var(--dm)',display:'block',marginBottom:'6px'}}>
                 Режим сборки строк:
               </label>
               <div style={{ display:'flex', gap:'6px' }}>
-                {[['strict','✂ Строгий'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']].map(([v,l]) => (
+                {(timingMode === 'silero'
+                  ? [['vad','📍 По VAD'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']]
+                  : [['strict','✂ Строгий'],['balanced','⚖ Балансный'],['sentence','📝 По фразам']]
+                ).map(([v,l]) => (
                   <button key={v} className={`btn tm${mergeMode===v?' on':''}`}
                     onClick={() => setMergeMode(v)}
                     style={{ fontSize:'0.72em', padding:'4px 8px', flex: 1 }}>{l}</button>
@@ -234,6 +238,12 @@ export default function SettingsCard({
                   onChange={e => setMergeGap(Number(e.target.value))} />
               </div>
             </>
+          )}
+          {timingMode === 'silero' && (
+            <div style={{fontSize:'0.75em',color:'var(--mu)',padding:'8px 10px',background:'var(--bg3)',borderRadius:6,border:'1px solid var(--brd)',lineHeight:1.7}}>
+              🧠 Silero VAD автоматически определяет границы речи.<br/>
+              Регуляторы пауз не нужны — нейросеть делает это точнее.
+            </div>
           )}
         </div>
       </div>
