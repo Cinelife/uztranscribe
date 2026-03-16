@@ -89,24 +89,37 @@ export default function ProgressCard({
           ))}
       </div>
 
-      {/* Кнопки — по длине текста, как в v12 */}
+      {/* Кнопки */}
       <div className="kr" style={{ marginTop: 10, justifyContent: 'flex-start' }}>
         {!running
           ? <button className="btn bc" onClick={onStart}>▶ Транскрибировать</button>
           : <button className="btn" onClick={onStop} style={{ borderColor: 'var(--er)', color: 'var(--er)' }}>■ Остановить</button>
         }
         <button
-          className="btn"
           onClick={clearLog}
           title="Очистить лог"
-          style={{ padding: '0 12px' }}
+          style={{
+            padding: '0 14px', border: '1px solid #7f1d1d',
+            borderRadius: 7, background: '#450a0a',
+            color: '#fca5a5', cursor: 'pointer',
+            fontSize: 18, lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: 34,
+          }}
         >🗑</button>
         <button
-          className="btn"
           onClick={downloadLog}
           title="Скачать лог"
           disabled={!log.length}
-          style={{ padding: '0 12px', color: log.length ? 'var(--pu)' : 'var(--mu)' }}
+          style={{
+            padding: '0 14px', border: '1px solid #14532d',
+            borderRadius: 7, background: log.length ? '#052e16' : 'var(--bg3)',
+            color: log.length ? '#86efac' : 'var(--mu)',
+            cursor: log.length ? 'pointer' : 'default',
+            fontSize: 20, lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: 34,
+          }}
         >⬇</button>
       </div>
     </div>
