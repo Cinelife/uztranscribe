@@ -1,6 +1,6 @@
 // useBatchRunner.js — v14.1.0
 // Добавлен Silero VAD путь: segmentAudioSilero → dispatchMultiAudio → assemble
-// timingMode: 'smart' | 'v12' | 'silero'
+// timingMode: 'smart' | 'v12' | 'silero' | 'v12rms'
 
 import { useRef, useState, useCallback } from 'react'
 import { transcribeEL }          from '../lib/elevenlabs.js'
@@ -131,15 +131,20 @@ export function useBatchRunner() {
             const p1T0 = performance.now()
 
             const sileroInput = audioBufCached || file
-            const { segments, batches, rawCount, speechCount, musicCount } =
+            const { segments, rawCount, speechCount, musicCount } =
               await segmentAudioSilero(
                 sileroInput,
                 (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') },
                 addLog
               )
             setVoskVisible(false)
+            // Группируем в пакеты по batchSize из UI
+            const speechOnly = segments.filter(s => s.type === 'speech')
+            const batches = []
+            for (let bi = 0; bi < speechOnly.length; bi += batchSize)
+              batches.push(speechOnly.slice(bi, bi + batchSize))
             const p1Ms = Math.round(performance.now() - p1T0)
-            addLog(`  Phase 1 ✓ — raw:${rawCount} | speech:${speechCount} | music:${musicCount} | пакетов:${batches.length} | ⏱ ${fmt(p1Ms)}`, 'ok')
+            addLog(`  Phase 1 ✓ — raw:${rawCount} | speech:${speechCount} | music:${musicCount} | пакетов:${batches.length} (×${batchSize}) | ⏱ ${fmt(p1Ms)}`, 'ok')
 
             if (speechCount === 0) {
               addLog(`  ⚠ Нет речевых сегментов — пропускаем`, 'wa')
@@ -152,7 +157,7 @@ export function useBatchRunner() {
 
             const { textMap } = await dispatchMultiAudio({
               audioBuf,
-              segments: segments.filter(s => s.type === 'speech'),
+              segments: speechOnly,
               batches,
               apiKey: gmKey, lang, gmModel, concurrency,
               onLog: addLog,
@@ -196,6 +201,53 @@ export function useBatchRunner() {
             addLog(`  ⏱ ИТОГО: ${fmt(totalMs)}`, 'pu')
             addLog(`  ✓ ${srtName} — ${segCount} сег | ⏱ ${fmt(totalMs)}`, 'ok')
             addLog(`══════════════════════════════════════════════`, 'dm')
+
+          } else if (isV12RMS) {
+            // v12 RMS micro-segments as individual WAVs
+            addLog(`  Phase 1 — v12 RMS Segmenter...`, 'pu')
+            setVoskVisible(true)
+            const p1T0v = performance.now()
+            const { flagMap: fmRms, chunks: chRms, totalMicroSegs: nRms } = await segmentAudio(
+              file, chunkSec, minPause,
+              (pct, txt) => { setVoskPct(pct); setVoskText(txt || '') }
+            )
+            setVoskVisible(false)
+            const p1Msv = Math.round(performance.now() - p1T0v)
+            addLog(`  Phase 1 ✓ — ${nRms} micro-сег | ⏱ ${fmt(p1Msv)}`, 'ok')
+
+            const audioBufR = audioBufCached || await decodeAudio(file)
+            const allMicro = chRms.flatMap(ch => ch.segments).map(s => ({
+              flagId: s.flagId, start: s.start, end: s.end, type: 'speech',
+            }))
+            const microBatches = []
+            for (let bi = 0; bi < allMicro.length; bi += batchSize)
+              microBatches.push(allMicro.slice(bi, bi + batchSize))
+
+            addLog(`  Phase 2 — Multi-audio (${nRms} сег → ${microBatches.length} пакетов ×${concurrency})...`, 'gm-cl')
+            const p2T0v = performance.now()
+            const { textMap: tmRms } = await dispatchMultiAudio({
+              audioBuf: audioBufR, segments: allMicro, batches: microBatches,
+              apiKey: gmKey, lang, gmModel, concurrency,
+              onLog: addLog, onProgress: txt => setProgressText(txt), stopFlagRef,
+            })
+            const p2Msv = Math.round(performance.now() - p2T0v)
+            addLog(`  Phase 2 ✓ | ⏱ ${fmt(p2Msv)}`, 'ok')
+
+            addLog(`  Phase 3 — Assembler...`, 'pu')
+            const p3T0v = performance.now()
+            const srtRms = assemble(
+              fmRms, tmRms, maxChars, mergeGap, mergeMode, dedupWindow,
+              'vad', null, 1.5, showMusicMarker, null
+            )
+            const p3Msv   = Math.round(performance.now() - p3T0v)
+            const cntRms  = srtRms.split('\n\n').filter(b => b.trim()).length
+            addLog(`  Phase 3 ✓ — ${cntRms} субтитров | ⏱ ${fmt(p3Msv)}`, 'ok')
+
+            const snRms  = file.name.replace(/\.[^.]+$/, '') + '_gm.srt'
+            const totRms = Math.round(performance.now() - fileT0)
+            downloadSrt(srtRms, snRms); newSrtMap[snRms] = srtRms
+            done++; setProgress(done/totalJobs*100)
+            addLog(`  ⏱ ИТОГО: ${fmt(totRms)} | ✓ ${snRms} — ${cntRms} сег`, 'ok')
 
           } else if (isV12) {
             // ════════════════════════════════════════════════════════════════
