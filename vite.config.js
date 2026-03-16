@@ -7,8 +7,14 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf8'))
 export default defineConfig({
   plugins: [react()],
   base: './',
-  build: { outDir: 'docs' },
+  build: {
+    outDir: 'docs',
+    assetsInlineLimit: 0,  // не инлайнить .onnx и .wasm файлы
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version)
+  },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web']  // не бандлить — использует свои .wasm файлы
   }
 })
