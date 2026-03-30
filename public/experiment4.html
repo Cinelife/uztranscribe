@@ -1,0 +1,2006 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Multi-Audio + Marker Test · UzTranscribe</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; min-height: 100vh; }
+.wrap { max-width: 880px; margin: 0 auto; }
+
+.header { border-bottom: 1px solid #111827; padding-bottom: 14px; margin-bottom: 20px; }
+.header-sub { font-size: 10px; color: #a78bfa; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+.header-title { font-size: 18px; font-weight: 700; color: #f1f5f9; }
+.header-desc { color: #4b5563; font-size: 11px; margin-top: 3px; }
+
+.lbl { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
+.grid2 { display: grid; grid-template-columns: 1fr 260px; gap: 12px; margin-bottom: 16px; align-items: start; }
+
+input[type=password] { width: 100%; background: #0d1520; border: 1px solid #111827; border-radius: 6px; padding: 8px 10px; color: #e2e8f0; font-family: inherit; font-size: 12px; outline: none; }
+input[type=password]:focus { border-color: #7c3aed; }
+
+.models { display: flex; flex-direction: column; gap: 3px; }
+.model-btn { padding: 6px 10px; border-radius: 5px; border: 1px solid #111827; background: #0d1520; color: #4b5563; font-family: inherit; font-size: 11px; cursor: pointer; transition: all 0.15s; text-align: left; display: flex; justify-content: space-between; align-items: center; }
+.model-btn.active { background: #3d1a6a; border-color: #7c3aed; color: #c4b5fd; }
+.model-btn.active .m-price { color: #a78bfa; }
+.model-btn:hover:not(.active) { border-color: #1e293b; color: #64748b; }
+.model-btn .m-price { font-size: 10px; color: #1f2937; margin-left: 8px; }
+.model-btn .m-status { font-size: 10px; margin-left: 6px; }
+
+.dropzone { border: 1px dashed #111827; border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; margin-bottom: 16px; transition: all 0.2s; user-select: none; }
+.dropzone.empty { color: #1f2937; }
+.dropzone.loaded { border-color: #1d4ed8; background: #0a1628; color: #60a5fa; }
+
+/* Mode tabs */
+.mode-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.mode-tab { padding: 6px 14px; border-radius: 6px; border: 1px solid #111827; background: #0d1520; color: #4b5563; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 500; transition: all 0.15s; }
+.mode-tab.active { border-color: #7c3aed; color: #c4b5fd; background: #1a0a2e; }
+
+/* RMS panel */
+.panel { background: #0a0f1a; border: 1px solid #111827; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+.panel-title { color: #4b5563; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+.controls-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.ctrl { display: flex; flex-direction: column; gap: 4px; }
+.ctrl label { color: #4b5563; font-size: 10px; letter-spacing: 1px; }
+.ctrl input[type=range] { width: 110px; accent-color: #7c3aed; }
+.ctrl-val { color: #c4b5fd; font-size: 11px; font-weight: 600; }
+.btn-action { padding: 6px 16px; border-radius: 6px; border: none; background: #1d4ed8; color: #fff; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 600; transition: all 0.15s; white-space: nowrap; }
+.btn-action:hover { background: #2563eb; }
+.btn-action.purple { background: #7c3aed; }
+.btn-action.purple:hover { background: #6d28d9; }
+.btn-action.yellow { background: #92400e; color: #fef08a; }
+.btn-action.yellow:hover { background: #78350f; }
+.btn-action.yellow.active { background: #ca8a04; color: #fff; border: 2px solid #fbbf24; }
+
+/* MFCC panel */
+.mfcc-panel { background: #0d0a00; border: 1px solid #92400e; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; display: none; }
+.mfcc-panel.show { display: block; }
+.mfcc-panel .panel-title { color: #fbbf24; }
+
+/* Seg row: music (MFCC-1 detected) */
+.seg-row.is-music { background: #1a1200; border-color: #ca8a04; }
+.seg-row.is-music .seg-idx { color: #fbbf24; }
+.seg-row.is-music .seg-dur { color: #ca8a04; }
+.mfcc-badge { font-size: 9px; background: #422006; color: #fbbf24; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
+
+/* Silero/BPM detector panel */
+.detector-panel { background: #0a0f1a; border: 1px solid #1e3a2f; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; display: none; }
+.detector-panel.show { display: block; }
+.detector-panel .panel-title { color: #4ade80; }
+.btn-action.green { background: #166534; color: #4ade80; }
+.btn-action.green:hover { background: #14532d; }
+.btn-action.green.active { background: #15803d; border: 2px solid #4ade80; }
+.silero-badge { font-size: 9px; background: #14532d; color: #4ade80; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
+.bpm-badge { font-size: 9px; background: #0c2a2a; color: #14b8a6; border-radius: 3px; padding: 1px 5px; margin-left: 4px; flex-shrink: 0; }
+.panel-info { color: #374151; font-size: 10px; margin-top: 8px; line-height: 1.7; }
+
+/* Marker panel */
+.marker-preview { height: 32px; border-radius: 4px; background: #040810; border: 1px solid #111827; position: relative; overflow: hidden; }
+.marker-wave { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+/* Canvas */
+#waveCanvas { width: 100%; height: 64px; display: block; border-radius: 4px; background: #040810; margin-bottom: 8px; }
+
+/* Segments */
+.seg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.seg-row { display: flex; align-items: center; gap: 6px; background: #0d1520; border-radius: 6px; padding: 7px 10px; border: 1px solid #111827; margin-bottom: 4px; cursor: grab; user-select: none; transition: all 0.15s; }
+.seg-row:active { cursor: grabbing; }
+.seg-row.dragging { opacity: 0.4; border-style: dashed; }
+.seg-row.drag-over { border-color: #7c3aed; background: #0a0f1a; }
+.seg-row.marker-row { background: #0d0a00; border-color: #92400e; cursor: default; }
+.drag-handle { color: #1f2937; font-size: 14px; cursor: grab; padding: 0 2px; flex-shrink: 0; }
+.seg-row input[type=number] { width: 65px; background: #111827; border: none; border-radius: 4px; padding: 3px 6px; color: #e2e8f0; font-family: inherit; font-size: 11px; outline: none; }
+.seg-idx { color: #7c3aed; min-width: 18px; font-size: 11px; flex-shrink: 0; }
+.seg-lbl { color: #374151; font-size: 10px; flex-shrink: 0; }
+.seg-dur { color: #374151; font-size: 10px; margin-left: 2px; min-width: 38px; }
+.btn-del { background: none; border: none; cursor: pointer; font-size: 14px; padding: 0 3px; margin-left: auto; flex-shrink: 0; }
+.btn-del:not(:disabled) { color: #ef4444; }
+.btn-del:disabled { color: #1f2937; cursor: default; }
+.btn-add { background: none; border: 1px dashed #111827; border-radius: 6px; padding: 5px 14px; color: #374151; cursor: pointer; font-family: inherit; font-size: 11px; margin-top: 4px; margin-bottom: 14px; transition: all 0.15s; }
+.btn-add:hover { border-color: #1e293b; color: #4b5563; }
+
+/* Prompt mode */
+.prompt-row { display: flex; align-items: center; gap: 14px; padding: 8px 14px; background: #0a0f1a; border: 1px solid #111827; border-radius: 8px; margin-bottom: 14px; }
+.prompt-row label { color: #4b5563; font-size: 11px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.prompt-row input[type=radio] { accent-color: #7c3aed; }
+
+/* Assembly preview */
+.assembly-preview { padding: 10px 14px; background: #0a0f1a; border: 1px solid #92400e; border-radius: 8px; margin-bottom: 14px; font-size: 10px; color: #92400e; display: none; }
+.assembly-preview.show { display: block; }
+.asm-seg { display: inline-block; padding: 2px 6px; border-radius: 3px; margin: 2px; font-size: 10px; }
+.asm-seg.speech { background: #0a2540; color: #60a5fa; }
+.asm-seg.mark   { background: #422006; color: #fbbf24; }
+
+.btn-run { width: 100%; padding: 11px; border-radius: 8px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; letter-spacing: 2px; transition: all 0.2s; margin-bottom: 16px; }
+.btn-run:enabled { background: #7c3aed; color: #fff; }
+.btn-run:enabled:hover { background: #6d28d9; }
+.btn-run:disabled { background: #111827; color: #374151; cursor: default; }
+
+.verdict { padding: 12px 14px; border-radius: 8px; border: 1px solid; margin-bottom: 14px; display: none; }
+.verdict.ok   { background: #052e16; border-color: #166534; }
+.verdict.warn { background: #422006; border-color: #92400e; }
+.verdict.err  { background: #1c0a0a; border-color: #7f1d1d; }
+.verdict-title { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.verdict-row { display: flex; gap: 8px; margin-bottom: 3px; }
+.verdict-idx { color: #7c3aed; min-width: 20px; font-size: 11px; flex-shrink: 0; }
+.verdict-text { color: #cbd5e1; font-size: 12px; }
+
+.log-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.log-actions { display: flex; gap: 6px; }
+.btn-log { background: #0d1520; border: 1px solid #111827; border-radius: 5px; padding: 4px 10px; color: #4b5563; cursor: pointer; font-family: inherit; font-size: 10px; letter-spacing: 1px; }
+.btn-log:hover { border-color: #1e293b; color: #64748b; }
+.log-box { background: #040810; border: 1px solid #0d1520; border-radius: 8px; padding: 10px 12px; max-height: 420px; overflow-y: auto; display: none; }
+.log-line { margin-bottom: 1px; white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
+.muted { color: #374151; font-size: 10px; margin-top: 6px; }
+
+/* FFT Spectrogram */
+#spectroCanvas { width:100%; height:120px; display:block; border-radius:4px; background:#040810; cursor:crosshair; }
+#peaksCanvas   { width:100%; height:60px;  display:block; border-radius:4px; background:#040810; margin-top:4px; }
+.fft-colorbar  { height:8px; border-radius:4px; margin:4px 0 8px;
+  background: linear-gradient(to right, #040810, #0a1628, #1d4ed8, #7c3aed, #f59e0b, #ef4444, #ffffff); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="header">
+  <div class="header-sub">UzTranscribe · Experiment Lab v3</div>
+  <div class="header-title">Multi-Audio + Marker Boundary Test</div>
+  <div class="header-desc">
+    Гипотеза: Сег1 + [МАРКЕР 1кГц] + Сег2 + [МАРКЕР] + Сег3 → один WAV → Gemini сегментирует по маркерам
+  </div>
+</div>
+
+<div class="grid2">
+  <div>
+    <div class="lbl">API KEY</div>
+    <input type="password" id="apiKey" placeholder="AIzaSy..." />
+  </div>
+  <div>
+    <div class="lbl">МОДЕЛЬ</div>
+    <div class="models" id="modelBtns"></div>
+  </div>
+</div>
+
+<div class="dropzone empty" id="dropzone" onclick="document.getElementById('fileInput').click()"
+  ondragover="event.preventDefault()" ondrop="event.preventDefault();if(event.dataTransfer.files[0])loadFile(event.dataTransfer.files[0])">
+  ⊕ Загрузить аудио (drag & drop или клик)
+</div>
+<input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="if(this.files[0])loadFile(this.files[0])">
+
+<!-- Mode tabs -->
+<div class="mode-tabs">
+  <button class="mode-tab active" onclick="setMode('manual')" id="tab-manual">✋ Ручная</button>
+  <button class="mode-tab" onclick="setMode('v12rms')" id="tab-v12rms">⚡ v12 RMS Auto</button>
+  <button class="mode-tab" onclick="setMode('marker')" id="tab-marker">🔔 Marker Boundary</button>
+  <button class="mode-tab" onclick="setMode('twopass')" id="tab-twopass">🎯 RMS→VAD 2-pass</button>
+  <button class="mode-tab" onclick="setMode('fft')" id="tab-fft">🔬 FFT Спектрограмма</button>
+</div>
+
+<!-- v12 RMS panel -->
+<!-- Waveform always visible when file loaded -->
+<canvas id="waveCanvas" style="display:none;width:100%;height:64px;border-radius:4px;background:#040810;margin-bottom:10px;"></canvas>
+
+<div id="rmsPanel" style="display:none">
+  <div class="panel">
+    <div class="panel-title">v12 RMS Сегментация</div>
+    <div class="controls-row">
+      <div class="ctrl">
+        <label>МИН. ПАУЗА</label>
+        <input type="range" min="50" max="800" step="50" value="300" id="rmsMinPause"
+          oninput="document.getElementById('rmsMinPauseV').textContent=this.value+'мс'">
+        <span class="ctrl-val" id="rmsMinPauseV">300мс</span>
+      </div>
+      <div class="ctrl">
+        <label>ПОРОГ %</label>
+        <input type="range" min="1" max="30" step="1" value="8" id="rmsThresh"
+          oninput="document.getElementById('rmsThreshV').textContent=this.value+'%'">
+        <span class="ctrl-val" id="rmsThreshV">8%</span>
+      </div>
+      <div class="ctrl">
+        <label>МАКС. ЧАНКс</label>
+        <input type="range" min="5" max="60" step="5" value="25" id="rmsChunkSec"
+          oninput="document.getElementById('rmsChunkV').textContent=this.value+'с'">
+        <span class="ctrl-val" id="rmsChunkV">25с</span>
+      </div>
+      <button class="btn-action" onclick="runRmsSegment()">⚡ Сегментировать</button>
+    </div>
+    <div class="panel-info" id="rmsInfo">← Нажми "Сегментировать" после загрузки файла</div>
+  </div>
+</div>
+
+<!-- MFCC-1 panel -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+  <button class="btn-action yellow" id="mfccToggleBtn" onclick="toggleMFCC()">🧠 MFCC-1 классификатор: ВЫКЛ</button>
+  <span style="color:#374151;font-size:10px" id="mfccStatus">← включи для анализа музыка/речь</span>
+</div>
+
+<!-- ═══ SILERO VAD + BPM DETECTOR ═══════════════════════════════════════════ -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+  <button class="btn-action green" id="sileroToggleBtn" onclick="toggleSilero()">🔊 Silero VAD детектор: ВЫКЛ</button>
+  <span style="color:#374151;font-size:10px" id="sileroStatus">← VAD + RMS energy = музыка/не-речь</span>
+</div>
+
+<div class="detector-panel" id="sileroPanel">
+  <div class="panel-title">🔊 SILERO VAD + BPM/LUFS ДЕТЕКТОР</div>
+  <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.7">
+    <strong style="color:#4ade80">Silero VAD</strong>: non-speech (p&lt;0.5) = не-речь |
+    <strong style="color:#14b8a6">BPM</strong>: автокорреляция огибающей → периодичность ударов → R² ≥ порог → музыка |
+    <strong style="color:#a78bfa">LUFS</strong>: инфо-метрика громкости (муз.продакшн: −14–9dB, запись: −30–50dB)
+    <br><strong style="color:#f97316">Логика: nonSpeech≥60% И (BPM R² ≥ порог)</strong> → музыкальный регион
+  </div>
+  <div class="controls-row">
+    <div class="ctrl">
+      <label>VAD ПОРОГ ЭНЕРГИИ</label>
+      <input type="range" min="1" max="30" step="1" value="8" id="sVadEnergy"
+        oninput="document.getElementById('sVadEnergyV').textContent=this.value+'%'">
+      <span class="ctrl-val" id="sVadEnergyV">8%</span>
+    </div>
+    <div class="ctrl">
+      <label>BPM ДИАПАЗОН</label>
+      <select id="sBpmRange" style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px;">
+        <option value="60-180">60–180 BPM (широкий)</option>
+        <option value="80-160" selected>80–160 BPM (поп/клип)</option>
+        <option value="120-180">120–180 BPM (быстрый)</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>BPM ПОРОГ (R²)</label>
+      <input type="range" min="0.1" max="0.9" step="0.05" value="0.35" id="sBpmThresh"
+        oninput="document.getElementById('sBpmThreshV').textContent=this.value">
+      <span class="ctrl-val" id="sBpmThreshV">0.35</span>
+    </div>
+    <div class="ctrl">
+      <label>LUFS (инфо)</label>
+      <span class="ctrl-val" id="sLufsThreshV" style="font-size:10px;color:#4b5563">показывает<br>громкость</span>
+      <input type="hidden" id="sLufsThresh" value="-6">
+    </div>
+    <div class="ctrl">
+      <label>ОКНО АНАЛИЗА</label>
+      <input type="range" min="500" max="5000" step="500" value="2000" id="sWindowMs"
+        oninput="document.getElementById('sWindowMsV').textContent=this.value+'мс'">
+      <span class="ctrl-val" id="sWindowMsV">2000мс</span>
+    </div>
+    <button class="btn-action green" onclick="runSileroDetector()">🔊 Анализировать</button>
+  </div>
+
+  <!-- Score bars per window -->
+  <div id="sileroScoreBars" style="margin-top:10px;display:none">
+    <div class="lbl" style="margin-bottom:4px">ОЦЕНКИ ПО ОКНАМ (VAD · BPM · LUFS)</div>
+    <canvas id="sileroScoreCanvas" style="width:100%;height:50px;display:block;border-radius:4px;background:#040810;border:1px solid #111827;"></canvas>
+  </div>
+  <div style="margin-top:8px;font-size:10px;color:#4ade80;font-weight:600" id="sileroResult">← нажми "Анализировать"</div>
+</div>
+
+<div class="mfcc-panel" id="mfccPanel">
+  <div class="panel-title">🧠 MFCC-1 — КЛАССИФИКАТОР МУЗЫКА / РЕЧЬ</div>
+  <div class="controls-row">
+    <div class="ctrl">
+      <label>ЧУВСТВИТЕЛЬНОСТЬ %</label>
+      <input type="range" min="0" max="100" step="5" value="20" id="mfccThresh"
+        oninput="document.getElementById('mfccThreshV').textContent=this.value+'%'">
+      <span class="ctrl-val" id="mfccThreshV">20%</span>
+    </div>
+    <div class="ctrl">
+      <label>ОКНО УСРЕДНЕНИЯ (МС)</label>
+      <input type="range" min="100" max="2000" step="100" value="500" id="mfccWindow"
+        oninput="document.getElementById('mfccWindowV').textContent=this.value+'мс'">
+      <span class="ctrl-val" id="mfccWindowV">500мс</span>
+    </div>
+    <div class="ctrl">
+      <label>МЕЛ-ФИЛЬТРЫ</label>
+      <input type="range" min="13" max="28" step="1" value="26" id="mfccMels"
+        oninput="document.getElementById('mfccMelsV').textContent=this.value">
+      <span class="ctrl-val" id="mfccMelsV">26</span>
+    </div>
+    <div class="ctrl">
+      <label>ДИСПЕРСИЯ (макс σ)</label>
+      <input type="range" min="0.5" max="8.0" step="0.5" value="3.0" id="mfccVarMax"
+        oninput="document.getElementById('mfccVarMaxV').textContent=this.value">
+      <span class="ctrl-val" id="mfccVarMaxV">3.0</span>
+    </div>
+    <div class="ctrl">
+      <label>МИН. ДЛИТЕЛЬНОСТЬ</label>
+      <input type="range" min="0.1" max="5.0" step="0.1" value="1.0" id="mfccMinDur"
+        oninput="document.getElementById('mfccMinDurV').textContent=this.value+'с'">
+      <span class="ctrl-val" id="mfccMinDurV">1.0с</span>
+    </div>
+    <button class="btn-action yellow" onclick="runMFCC()">🧠 Анализировать</button>
+  </div>
+  <div style="margin-top:8px;font-size:10px;color:#374151;line-height:1.7">
+    MFCC-1 детектирует <strong>тональные</strong> звуки: музыка, пение, синус-тоны, 1кГц маркеры.<br>
+    <strong>Чувствительность 0%</strong> = ничего не детектируется &nbsp;·&nbsp;
+    <strong>100%</strong> = детектирует всё тональное включая гласные речи<br>
+    <strong>Дисперсия σ</strong> — ключевой параметр: речь прерывистая (σ высокий), музыка устойчивая (σ низкий)<br>
+    Музыка: MFCC-1=[22,23,22,23] σ≈0.5 &nbsp;·&nbsp; Речь: [22,8,3,21,5] σ≈9 — вот настоящий разделитель<br>
+    <strong>Рекомендовано: чувств=20%, σ≤3.0, минДур=1.0с</strong><br>
+    Макс. фильтры = 28 (лимит FFT 512)<br>
+    🟡 <strong style="color:#fbbf24">Жёлтый</strong> = тональный (MFCC-1 высокий) &nbsp;|&nbsp;
+    🟣 <strong style="color:#a78bfa">Фиолетовый</strong> = RMS речь &nbsp;|&nbsp;
+    Перекрытие = согласны
+  </div>
+  <div style="margin-top:6px;font-size:10px;color:#fbbf24;font-weight:600" id="mfccResult">← нажми "Анализировать"</div>
+</div>
+
+<!-- Marker settings panel -->
+<div id="markerPanel" style="display:none">
+  <div class="panel">
+    <div class="panel-title">🔔 Настройки звуковой метки</div>
+    <div class="controls-row">
+      <div class="ctrl">
+        <label>ДЛИНА МАРКЕРА</label>
+        <input type="range" min="50" max="2000" step="50" value="300" id="markerDur"
+          oninput="document.getElementById('markerDurV').textContent=this.value+'мс';previewMarker()">
+        <span class="ctrl-val" id="markerDurV">300мс</span>
+      </div>
+      <div class="ctrl">
+        <label>ЭНЕРГИЯ (амплитуда)</label>
+        <input type="range" min="10" max="100" step="5" value="80" id="markerAmp"
+          oninput="document.getElementById('markerAmpV').textContent=this.value+'%';previewMarker()">
+        <span class="ctrl-val" id="markerAmpV">80%</span>
+      </div>
+      <div class="ctrl">
+        <label>ЧАСТОТА (Гц)</label>
+        <input type="range" min="200" max="4000" step="100" value="1000" id="markerFreq"
+          oninput="document.getElementById('markerFreqV').textContent=this.value+'Гц';previewMarker()">
+        <span class="ctrl-val" id="markerFreqV">1000Гц</span>
+      </div>
+      <div class="ctrl">
+        <label>ТИП ВОЛНЫ</label>
+        <select id="markerWave" onchange="previewMarker()"
+          style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px;outline:none;">
+          <option value="sine">Синус</option>
+          <option value="square">Прямоугольник</option>
+          <option value="white">Белый шум</option>
+          <option value="chirp">Chirp ↑</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:10px">
+      <div class="lbl">ПРЕВЬЮ МАРКЕРА</div>
+      <canvas id="markerCanvas" style="width:100%;height:36px;display:block;border-radius:4px;background:#040810;border:1px solid #111827;"></canvas>
+    </div>
+    <div class="panel-info">
+      Синус 1кГц = тональный → высокая спектральная плотность, легко распознаётся.<br>
+      Белый шум = плоский спектр → резкий контраст с речью по SpectralFlatness.<br>
+      Chirp = нарастающий тон → уникальная подпись в спектре.
+    </div>
+  </div>
+
+  <!-- Assembly preview -->
+  <div class="assembly-preview show" id="asmPreview">
+    <div class="lbl" style="margin-bottom:6px">СТРУКТУРА СБОРКИ (при запуске теста)</div>
+    <div id="asmViz">← сначала добавь сегменты</div>
+  </div>
+</div>
+
+<!-- Two-Pass RMS→VAD panel -->
+<div id="twopassPanel" style="display:none">
+  <div class="panel" style="border-color:#0e7490">
+    <div class="panel-title" style="color:#22d3ee">🎯 ДВУХПРОХОДНАЯ СЕГМЕНТАЦИЯ: RMS → VAD</div>
+    <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.8">
+      <strong style="color:#22d3ee">Pass 1 — RMS</strong>: определяет границы фраз по паузам (предложение целиком)<br>
+      <strong style="color:#a78bfa">Pass 2 — Silero VAD</strong>: уточняет точные in/out внутри каждой фразы<br>
+      <strong style="color:#4ade80">Результат</strong>: сегменты 0.9–2.5с, читаемые зрителем, с точными VAD-границами
+    </div>
+    <div class="controls-row">
+      <div class="ctrl">
+        <label>МИН. ПАУЗА RMS (мс)</label>
+        <input type="range" min="100" max="800" step="50" value="300" id="tp_minPause"
+          oninput="document.getElementById('tp_minPauseV').textContent=this.value+'мс'">
+        <span class="ctrl-val" id="tp_minPauseV">300мс</span>
+      </div>
+      <div class="ctrl">
+        <label>МИН. ДЛИТ. СУБТИТРА</label>
+        <input type="range" min="0.5" max="1.5" step="0.1" value="0.9" id="tp_minDur"
+          oninput="document.getElementById('tp_minDurV').textContent=this.value+'с'">
+        <span class="ctrl-val" id="tp_minDurV">0.9с</span>
+      </div>
+      <div class="ctrl">
+        <label>МАКС. ДЛИТ. СУБТИТРА</label>
+        <input type="range" min="1.5" max="5.0" step="0.1" value="2.5" id="tp_maxDur"
+          oninput="document.getElementById('tp_maxDurV').textContent=this.value+'с'">
+        <span class="ctrl-val" id="tp_maxDurV">2.5с</span>
+      </div>
+      <div class="ctrl">
+        <label>БУФЕР ±мс</label>
+        <input type="range" min="0" max="300" step="25" value="100" id="tp_bufMs"
+          oninput="document.getElementById('tp_bufMsV').textContent=this.value+'мс'">
+        <span class="ctrl-val" id="tp_bufMsV">100мс</span>
+      </div>
+      <button class="btn-action" style="background:#0e7490;color:#fff" onclick="runTwoPass()">🎯 Сегментировать</button>
+    </div>
+    <div style="margin-top:8px;font-size:10px;color:#22d3ee;font-weight:600" id="tpResult">← нажми "Сегментировать"</div>
+    <div style="margin-top:4px;font-size:10px;color:#374151" id="tpStats"></div>
+  </div>
+</div>
+
+<!-- FFT Spectrogram panel -->
+<div id="fftPanel" style="display:none">
+  <div class="panel" style="border-color:#0891b2">
+    <div class="panel-title" style="color:#22d3ee">🔬 FFT СПЕКТРОГРАММА + CONSTELLATION MAP (Shazam-подход)</div>
+    <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.8">
+      <strong style="color:#22d3ee">Спектрограмма</strong>: время × частота × амплитуда (dB) — полная картина сигнала<br>
+      <strong style="color:#fbbf24">Constellation map</strong>: пики энергии → цифровой отпечаток (как Shazam)<br>
+      <strong style="color:#4ade80">Речевые события</strong>: взрывные согласные = широкополосные пики, гласные = тональные полосы
+    </div>
+    <div class="controls-row">
+      <div class="ctrl">
+        <label>FFT SIZE</label>
+        <select id="fftSize" style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px;">
+          <option value="512">512 (20мс)</option>
+          <option value="1024" selected>1024 (46мс)</option>
+          <option value="2048">2048 (93мс)</option>
+          <option value="4096">4096 (186мс)</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label>ПЕРЕКРЫТИЕ %</label>
+        <input type="range" min="0" max="90" step="10" value="75" id="fftOverlap"
+          oninput="document.getElementById('fftOverlapV').textContent=this.value+'%'">
+        <span class="ctrl-val" id="fftOverlapV">75%</span>
+      </div>
+      <div class="ctrl">
+        <label>МАХ ЧАСТОТА</label>
+        <input type="range" min="2000" max="22000" step="1000" value="8000" id="fftMaxFreq"
+          oninput="document.getElementById('fftMaxFreqV').textContent=(this.value/1000).toFixed(0)+'кГц'">
+        <span class="ctrl-val" id="fftMaxFreqV">8кГц</span>
+      </div>
+      <div class="ctrl">
+        <label>ПОРОГ ПИКОВ (dB)</label>
+        <input type="range" min="-60" max="-10" step="5" value="-30" id="fftPeakThresh"
+          oninput="document.getElementById('fftPeakThreshV').textContent=this.value+'dB'">
+        <span class="ctrl-val" id="fftPeakThreshV">-30dB</span>
+      </div>
+      <div class="ctrl">
+        <label>ЗОНА ПИКА (Гц)</label>
+        <input type="range" min="50" max="500" step="50" value="150" id="fftPeakZone"
+          oninput="document.getElementById('fftPeakZoneV').textContent=this.value+'Гц'">
+        <span class="ctrl-val" id="fftPeakZoneV">150Гц</span>
+      </div>
+      <button class="btn-action" style="background:#0891b2" onclick="runFFTSpectrogram()">🔬 Анализировать</button>
+    </div>
+
+    <div id="fftResultArea" style="display:none;margin-top:12px">
+      <div class="lbl" style="margin-bottom:4px">СПЕКТРОГРАММА (время × частота × dB)</div>
+      <div class="fft-colorbar"></div>
+      <canvas id="spectroCanvas"></canvas>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:#374151;margin-top:2px">
+        <span>0с</span><span id="spectroMid"></span><span id="spectroDur"></span>
+      </div>
+
+      <div class="lbl" style="margin-top:10px;margin-bottom:4px">CONSTELLATION MAP — пики энергии (Shazam-отпечаток)</div>
+      <canvas id="peaksCanvas"></canvas>
+      <div style="font-size:10px;color:#22d3ee;margin-top:6px;font-weight:600" id="fftResult">← нажми "Анализировать"</div>
+
+      <div style="margin-top:10px">
+        <label style="font-size:10px;color:#4b5563;display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="fftToSegments" style="accent-color:#22d3ee">
+          <span>Использовать пики как сегменты (передать в Gemini)</span>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Segment editor -->
+<div id="segEditor" style="display:none">
+  <div class="seg-header">
+    <div class="lbl" style="margin-bottom:0">СЕГМЕНТЫ <span id="segCount" style="color:#374151"></span></div>
+    <div style="color:#1f2937;font-size:10px">⠿ тащи · редактируй start/end</div>
+  </div>
+  <div id="segList"></div>
+  <button class="btn-add" onclick="addSeg()">+ добавить сегмент</button>
+</div>
+
+<!-- Prompt mode -->
+<div class="prompt-row" id="promptRow" style="display:none">
+  <div class="lbl" style="margin-bottom:0;flex-shrink:0">ПРОМТ:</div>
+  <label><input type="radio" name="pmode" value="timestamps" checked> С таймкодами (v12 Flags style)</label>
+  <label><input type="radio" name="pmode" value="plain"> Без таймкодов</label>
+  <label id="markerPromptLabel" style="display:none"><input type="radio" name="pmode" value="marker"> 🔔 Маркер-граница</label>
+</div>
+
+<button class="btn-run" id="runBtn" onclick="runTest()" disabled>▶ ЗАПУСТИТЬ ТЕСТ</button>
+<div class="verdict" id="verdict"></div>
+
+<div id="logSection" style="display:none">
+  <div class="log-toolbar">
+    <div class="lbl" style="margin-bottom:0">ЛОГ</div>
+    <div class="log-actions">
+      <button class="btn-log" onclick="clearLog()">✕ ОЧИСТИТЬ</button>
+      <button class="btn-log" onclick="downloadLog()">⬇ ЛОГ</button>
+        <button class="btn-log" onclick="downloadSrt()" style="color:#4ade80;border-color:#166534">⬇ SRT</button>
+    </div>
+  </div>
+  <div class="log-box" id="logBox"></div>
+</div>
+
+</div><!-- /wrap -->
+<script>
+// ── Models ────────────────────────────────────────────────────────────────────
+const MODELS = [
+  { id: 'gemini-2.5-flash-lite',         label: 'Gemini 2.5 Flash Lite', audioIn: 0.50, out: 0.40 },
+  { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite', audioIn: 0.60, out: 1.50 },
+  { id: 'gemini-2.5-flash',              label: 'Gemini 2.5 Flash',      audioIn: 1.00, out: 2.50 },
+  { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash',        audioIn: 1.00, out: 3.00 },
+]
+const LOG_C = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#a78bfa', dim:'#374151', result:'#e2e8f0' }
+let currentModel = MODELS[0].id
+let audioBuf = null, duration = 0, segments = [], running = false
+let currentMode = 'manual', dragSrc = null
+let waveformPeaks = null  // pre-computed RMS peaks для быстрого redraw
+
+// Models
+const bw = document.getElementById('modelBtns')
+MODELS.forEach(m => {
+  const b = document.createElement('button')
+  b.className = 'model-btn' + (m.id === currentModel ? ' active' : '')
+  b.id = 'mbtn_' + m.id.replace(/[.-]/g,'_')
+  b.innerHTML = `<span class="m-name" style="font-size:11px">${m.label}</span><span class="m-price">♪$${m.audioIn}</span><span class="m-status" id="st_${m.id.replace(/\./g,'_')}"></span>`
+  b.onclick = () => { currentModel = m.id; document.querySelectorAll('.model-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active') }
+  bw.appendChild(b)
+})
+
+// ── Mode ──────────────────────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode
+  ;['manual','v12rms','marker','twopass','fft'].forEach(m => document.getElementById('tab-'+m).classList.toggle('active', m===mode))
+  document.getElementById('rmsPanel').style.display      = mode==='v12rms'   ? 'block' : 'none'
+  document.getElementById('markerPanel').style.display  = mode==='marker'   ? 'block' : 'none'
+  document.getElementById('twopassPanel').style.display = mode==='twopass'  ? 'block' : 'none'
+  document.getElementById('fftPanel').style.display     = mode==='fft'       ? 'block' : 'none'
+  document.getElementById('markerPromptLabel').style.display = mode==='marker' ? 'flex' : 'none'
+  if (mode==='marker') {
+    // Auto-select marker prompt
+    document.querySelector('input[name="pmode"][value="marker"]').checked = true
+    updateAsmPreview()
+    previewMarker()
+  }
+  if (mode==='v12rms' && audioBuf) drawWaveform()
+}
+
+// ── Load audio ────────────────────────────────────────────────────────────────
+async function loadFile(f) {
+  const dz = document.getElementById('dropzone')
+  dz.className='dropzone'; dz.textContent='⏳ Декодирую...'
+  try {
+    const ab = await f.arrayBuffer()
+    const ctx = new OfflineAudioContext(1,1,44100)
+    audioBuf = await ctx.decodeAudioData(ab)
+    duration = audioBuf.duration
+    const t = duration/3
+    segments = [
+      { start:0, end:+t.toFixed(1) },
+      { start:+t.toFixed(1), end:+(t*2).toFixed(1) },
+      { start:+(t*2).toFixed(1), end:+duration.toFixed(1) },
+    ]
+    dz.className='dropzone loaded'
+    dz.textContent=`✓ ${f.name} · ${duration.toFixed(2)}s · ${audioBuf.sampleRate}Hz`
+    document.getElementById('segEditor').style.display='block'
+    document.getElementById('promptRow').style.display='flex'
+    document.getElementById('runBtn').disabled=false
+    renderSegs(); updateAsmPreview()
+    document.getElementById('waveCanvas').style.display='block'
+    buildWaveformPeaks()  // pre-compute once
+    drawWaveform()
+  } catch(e) { dz.className='dropzone empty'; dz.textContent=`✗ ${e.message}` }
+}
+
+// ── Waveform ──────────────────────────────────────────────────────────────────
+function buildWaveformPeaks() {
+  // Pre-compute RMS peaks ОДИН РАЗ при загрузке — O(N) единожды
+  // Потом любой redraw читает 800 значений вместо 8.2M сэмплов
+  const data = audioBuf.getChannelData(0)
+  const W    = 1200  // максимальная ширина canvas
+  const step = Math.ceil(data.length / W)
+  waveformPeaks = new Float32Array(W)
+  for (let x = 0; x < W; x++) {
+    let sum = 0, count = 0
+    for (let s = x*step; s < Math.min((x+1)*step, data.length); s++) {
+      sum += data[s] * data[s]; count++
+    }
+    waveformPeaks[x] = count > 0 ? Math.sqrt(sum/count) : 0  // RMS per column
+  }
+}
+
+function drawWaveform() {
+  const cv=document.getElementById('waveCanvas'), ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800, H=64; cv.width=W; cv.height=H
+  // Background
+  ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+
+  // ── Silero: речевые сегменты (зелёная полоска сверху) ───────────────────────
+  if (sileroEnabled && sileroSpeechSegs.length) {
+    sileroSpeechSegs.forEach(s => {
+      const x0=s.start/duration*W, x1=s.end/duration*W
+      ctx.fillStyle='rgba(74,222,128,0.12)'; ctx.fillRect(x0,0,x1-x0,H)
+      ctx.fillStyle='rgba(74,222,128,0.8)'; ctx.fillRect(x0,0,x1-x0,3)
+    })
+  }
+  // ── Silero: музыкальные регионы (оранжевый, поверх зелёного) ─────────────
+  if (sileroEnabled && sileroSegs.length) {
+    sileroSegs.forEach(s => {
+      const x0=s.start/duration*W, x1=s.end/duration*W
+      ctx.fillStyle='rgba(249,115,22,0.20)'; ctx.fillRect(x0,0,x1-x0,H)
+      ctx.fillStyle='rgba(249,115,22,0.9)'; ctx.fillRect(x0,H-4,x1-x0,4)
+      // Label
+      ctx.fillStyle='#fb923c'; ctx.font='bold 9px monospace'
+      ctx.fillText('♪', x0+3, H-6)
+    })
+  }
+
+  // ── MFCC-1 музыкальные регионы (жёлтый фон, под всем остальным) ──
+  if (mfccEnabled && mfccRegions.length) {
+    mfccRegions.forEach(r => {
+      const x0=r.start/duration*W, x1=r.end/duration*W
+      ctx.fillStyle='rgba(202,138,4,0.18)'; ctx.fillRect(x0,0,x1-x0,H)
+      // Жёлтая линия сверху как маркер
+      ctx.fillStyle='rgba(251,191,36,0.7)'; ctx.fillRect(x0,0,x1-x0,3)
+    })
+  }
+
+  // ── Waveform — читаем из pre-computed peaks (O(W) = O(800)) ─────────────────
+  ctx.strokeStyle='#7c3aed'; ctx.lineWidth=1; ctx.beginPath()
+  const srcW = waveformPeaks ? waveformPeaks.length : W
+  for (let x = 0; x < W; x++) {
+    const pi  = Math.floor(x / W * srcW)
+    const rms = waveformPeaks ? waveformPeaks[pi] : 0
+    const y   = (1 - rms * 1.8) * H / 2  // *1.8 чтобы RMS визуально был заметен
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+  }
+  ctx.stroke()
+
+  // ── RMS сегменты (цвет зависит от режима) ────────────────────────────────
+  segments.forEach((seg,i)=>{
+    const x0=seg.start/duration*W, x1=seg.end/duration*W
+    const overlap = mfccEnabled && mfccRegions.some(r => r.start < seg.end && r.end > seg.start)
+    const isTwoPass = currentMode === 'twopass'
+    const dur = seg.end - seg.start
+
+    // Twopass: цвет по длительности
+    let fillColor, strokeColor, textColor
+    if (isTwoPass) {
+      if      (dur < TP_MIN)     { fillColor='rgba(239,68,68,0.12)';   strokeColor='#ef4444'; textColor='#fca5a5' }  // красный: короткий
+      else if (dur > TP_MAX)     { fillColor='rgba(249,115,22,0.12)';  strokeColor='#f97316'; textColor='#fdba74' }  // оранжевый: длинный
+      else                       { fillColor='rgba(34,211,238,0.12)';  strokeColor='#22d3ee'; textColor='#a5f3fc' }  // циан: номинал ✓
+    } else {
+      fillColor   = overlap ? 'rgba(251,191,36,0.12)' : 'rgba(124,58,237,0.10)'
+      strokeColor = overlap ? '#fbbf24' : '#7c3aed'
+      textColor   = overlap ? '#fef08a' : '#a78bfa'
+    }
+
+    ctx.fillStyle=fillColor; ctx.fillRect(x0,0,x1-x0,H)
+    ctx.strokeStyle=strokeColor; ctx.lineWidth=1.5
+    ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,H); ctx.stroke()
+    ctx.fillStyle=textColor; ctx.font='9px monospace'
+    ctx.fillText(i+1,x0+3,11)
+    // Twopass: показываем длительность
+    if (isTwoPass) ctx.fillText(dur.toFixed(1)+'s', x0+3, H-4)
+  })
+
+  // ── MFCC-1 метки (жёлтые номера) ──
+  if (mfccEnabled && mfccSegs.length) {
+    mfccSegs.forEach((s,i) => {
+      const x0=s.start/duration*W
+      ctx.fillStyle='#fbbf24'; ctx.font='bold 9px monospace'
+      ctx.fillText('M'+(i+1), x0+3, H-4)
+    })
+  }
+}
+
+// ── Marker preview canvas ─────────────────────────────────────────────────────
+function previewMarker() {
+  const cv=document.getElementById('markerCanvas'), ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800, H=36; cv.width=W; cv.height=H
+  const freq=+document.getElementById('markerFreq').value
+  const amp=+document.getElementById('markerAmp').value/100
+  const wave=document.getElementById('markerWave').value
+  const SR=16000
+  const durSec=+document.getElementById('markerDur').value/1000
+  const N=Math.floor(SR*durSec)
+  ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+  ctx.strokeStyle='#fbbf24'; ctx.lineWidth=1; ctx.beginPath()
+  for(let x=0;x<W;x++){
+    const t=(x/W)*durSec
+    let v=0
+    if(wave==='sine')     v=Math.sin(2*Math.PI*freq*t)*amp
+    else if(wave==='square') v=(Math.sin(2*Math.PI*freq*t)>0?1:-1)*amp*0.7
+    else if(wave==='white') v=(Math.random()*2-1)*amp
+    else if(wave==='chirp') v=Math.sin(2*Math.PI*(freq+freq*t/durSec)*t)*amp
+    const y=(1-v)*H/2
+    x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)
+  }
+  ctx.stroke()
+  updateAsmPreview()
+}
+
+// ── Assembly preview ──────────────────────────────────────────────────────────
+function updateAsmPreview() {
+  if (currentMode!=='marker') return
+  const dur=+document.getElementById('markerDur').value
+  const amp=+document.getElementById('markerAmp').value
+  const freq=+document.getElementById('markerFreq').value
+  const wave=document.getElementById('markerWave').value
+  let html = ''
+  segments.forEach((s,i) => {
+    const d=(s.end-s.start).toFixed(1)
+    html += `<span class="asm-seg speech">Сег${i+1} [${s.start.toFixed(1)}–${s.end.toFixed(1)}с ${d}с]</span>`
+    if (i < segments.length-1)
+      html += `<span class="asm-seg mark">🔔 МАРКЕР [${dur}мс ${freq}Гц ${amp}% ${wave}]</span>`
+  })
+  html += `<div style="margin-top:6px;color:#4b5563">→ один WAV: ${(segments.reduce((a,s)=>a+(s.end-s.start),0) + (segments.length-1)*dur/1000).toFixed(1)}с общая длина</div>`
+  document.getElementById('asmViz').innerHTML = html
+}
+
+// ── v12 RMS ───────────────────────────────────────────────────────────────────
+function runRmsSegment() {
+  if (!audioBuf) return
+  const data=audioBuf.getChannelData(0), sr=audioBuf.sampleRate
+  const FRAME_MS=10, frameSize=Math.floor(sr*FRAME_MS/1000)
+  const minPauseMs=+document.getElementById('rmsMinPause').value
+  const threshPct=+document.getElementById('rmsThresh').value/100
+  const chunkSec=+document.getElementById('rmsChunkSec').value
+  const frames=[]
+  for(let i=0;i<data.length-frameSize;i+=frameSize){let s=0;for(let j=0;j<frameSize;j++)s+=data[i+j]*data[i+j];frames.push(Math.sqrt(s/frameSize))}
+  const sorted=[...frames].sort((a,b)=>a-b)
+  const p10=sorted[Math.floor(sorted.length*.10)], p90=sorted[Math.floor(sorted.length*.90)]
+  const threshold=p10+(p90-p10)*threshPct
+  const minPF=Math.ceil(minPauseMs/FRAME_MS), minSF=Math.ceil(100/FRAME_MS)
+  const micro=[]; let inS=false,ss=0,pc=0
+  for(let fi=0;fi<frames.length;fi++){
+    if(!inS&&frames[fi]>threshold){inS=true;ss=fi;pc=0}
+    else if(inS){if(frames[fi]<=threshold){pc++;if(pc>=minPF){const se=fi-pc;if(se-ss>=minSF)micro.push({start:+(ss*FRAME_MS/1000).toFixed(3),end:+(se*FRAME_MS/1000).toFixed(3)});inS=false;pc=0}}else pc=0}
+  }
+  if(inS) micro.push({start:+(ss*FRAME_MS/1000).toFixed(3),end:+duration.toFixed(3)})
+  segments=micro
+  document.getElementById('rmsInfo').textContent=`⚡ ${micro.length} сегментов | порог: ${(threshold*100).toFixed(2)}%`
+  renderSegs(); drawWaveform()
+}
+
+
+// ── MFCC-1 ───────────────────────────────────────────────────────────────────
+// Build mel filterbank: N_MELS triangular filters from fMin to fMax
+function buildMelFilterbank(fftSize, sr, nMels, fMin=80, fMax=8000) {
+  const hzToMel = f => 2595 * Math.log10(1 + f/700)
+  const melToHz = m => 700 * (Math.pow(10, m/2595) - 1)
+  const melMin = hzToMel(fMin), melMax = hzToMel(fMax)
+  const melPts = Array.from({length: nMels+2}, (_,i) => melMin + i*(melMax-melMin)/(nMels+1))
+  const hzPts  = melPts.map(melToHz)
+  const binPts = hzPts.map(h => Math.floor((fftSize+1) * h / sr))
+  const bank = []
+  for (let m = 1; m <= nMels; m++) {
+    const filt = new Float32Array(fftSize/2)
+    for (let k = binPts[m-1]; k < binPts[m]; k++)
+      filt[k] = (k - binPts[m-1]) / (binPts[m] - binPts[m-1])
+    for (let k = binPts[m]; k <= binPts[m+1] && k < fftSize/2; k++)
+      filt[k] = (binPts[m+1] - k) / (binPts[m+1] - binPts[m])
+    bank.push(filt)
+  }
+  return bank
+}
+
+// Compute MFCC-1 for a frame of samples (after FFT magnitude)
+function computeFrameMFCC1(magnitude, melBank) {
+  const n = melBank.length
+  const logMel = melBank.map(filt => {
+    let energy = 0
+    for (let k = 0; k < filt.length; k++) energy += filt[k] * magnitude[k]
+    return Math.log(Math.max(energy, 1e-10))
+  })
+  // DCT coefficient index 1: MFCC-1 = sum(logMel[m] * cos(π*(m+0.5)/N))
+  let mfcc1 = 0
+  for (let m = 0; m < n; m++) mfcc1 += logMel[m] * Math.cos(Math.PI * 1 * (m + 0.5) / n)
+  return mfcc1
+}
+
+// Simple FFT magnitude (Cooley-Tukey, power of 2)
+function fftMagnitude(samples) {
+  const N = samples.length
+  // real/imag arrays
+  const re = new Float32Array(N), im = new Float32Array(N)
+  for (let i = 0; i < N; i++) re[i] = samples[i]
+  // bit reversal
+  for (let i = 1, j = 0; i < N; i++) {
+    let bit = N >> 1
+    for (; j & bit; bit >>= 1) j ^= bit
+    j ^= bit
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]] }
+  }
+  // butterfly
+  for (let len = 2; len <= N; len <<= 1) {
+    const ang = -2 * Math.PI / len
+    const wRe = Math.cos(ang), wIm = Math.sin(ang)
+    for (let i = 0; i < N; i += len) {
+      let uRe = 1, uIm = 0
+      for (let j = 0; j < len/2; j++) {
+        const vRe = re[i+j+len/2]*uRe - im[i+j+len/2]*uIm
+        const vIm = re[i+j+len/2]*uIm + im[i+j+len/2]*uRe
+        re[i+j+len/2] = re[i+j]-vRe; im[i+j+len/2] = im[i+j]-vIm
+        re[i+j] += vRe; im[i+j] += vIm
+        const tmp = uRe*wRe - uIm*wIm; uIm = uRe*wIm + uIm*wRe; uRe = tmp
+      }
+    }
+  }
+  const mag = new Float32Array(N/2)
+  for (let i = 0; i < N/2; i++) mag[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i])
+  return mag
+}
+
+// Hamming window
+function hammingWindow(N) {
+  return Float32Array.from({length: N}, (_,n) => 0.54 - 0.46*Math.cos(2*Math.PI*n/(N-1)))
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ДВУХПРОХОДНАЯ СЕГМЕНТАЦИЯ: RMS → VAD
+// Номинал: 1.5с | Нижняя: 0.9с | Верхняя: 2.5с
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TP_NOMINAL = 1.5  // целевая длина субтитра
+const TP_MIN     = 0.9  // нижний предел
+const TP_MAX     = 2.5  // верхний предел
+
+async function runTwoPass() {
+  if (!audioBuf) return
+  document.getElementById('tpResult').textContent = '⏳ Pass 1: RMS...'
+  document.getElementById('tpStats').textContent  = ''
+
+  const sr       = audioBuf.sampleRate
+  const data     = audioBuf.getChannelData(0)
+  const minPause = +document.getElementById('tp_minPause').value
+  const minDur   = +document.getElementById('tp_minDur').value   // 0.9с
+  const maxDur   = +document.getElementById('tp_maxDur').value   // 2.5с
+  const bufMs    = +document.getElementById('tp_bufMs').value    // 100мс
+
+  push('', 'dim')
+  push('─── ДВУХПРОХОДНАЯ СЕГМЕНТАЦИЯ RMS→VAD ──────────────────', 'dim')
+  push(`Параметры: minPause=${minPause}мс | диапазон=${minDur}–${maxDur}с (номинал ${TP_NOMINAL}с) | буфер=±${bufMs}мс`, 'dim')
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PASS 1 — RMS: фразовые границы (предложения) по паузам
+  // ══════════════════════════════════════════════════════════════════════════
+  const FRAME_MS  = 10
+  const frameSize = Math.floor(sr * FRAME_MS / 1000)
+  const frames    = []
+  for (let i = 0; i + frameSize <= data.length; i += frameSize) {
+    let sum = 0
+    for (let j = 0; j < frameSize; j++) sum += data[i+j] * data[i+j]
+    frames.push(Math.sqrt(sum / frameSize))
+  }
+
+  // Адаптивный порог по percentile
+  const sorted   = [...frames].sort((a,b)=>a-b)
+  const p10      = sorted[Math.floor(sorted.length*0.10)]
+  const p90      = sorted[Math.floor(sorted.length*0.90)]
+  const thresh   = p10 + (p90-p10) * 0.08
+
+  const minPauseFrames = Math.ceil(minPause / FRAME_MS)
+  const minSegFrames   = Math.ceil(100 / FRAME_MS)
+
+  // RMS сегменты — фразы
+  const rmsPhrases = []
+  let inSpeech = false, segStart = 0, pauseCount = 0
+  for (let fi = 0; fi < frames.length; fi++) {
+    if (!inSpeech && frames[fi] > thresh) {
+      inSpeech = true; segStart = fi; pauseCount = 0
+    } else if (inSpeech) {
+      if (frames[fi] <= thresh) {
+        pauseCount++
+        if (pauseCount >= minPauseFrames) {
+          const segEnd = fi - pauseCount
+          if (segEnd - segStart >= minSegFrames)
+            rmsPhrases.push({ start: +(segStart*FRAME_MS/1000).toFixed(3), end: +(segEnd*FRAME_MS/1000).toFixed(3) })
+          inSpeech = false; pauseCount = 0
+        }
+      } else pauseCount = 0
+    }
+  }
+  if (inSpeech) rmsPhrases.push({ start: +(segStart*FRAME_MS/1000).toFixed(3), end: +duration.toFixed(3) })
+
+  push(`  Pass 1 ✓ — ${rmsPhrases.length} фраз RMS`, 'ok')
+  document.getElementById('tpResult').textContent = `⏳ Pass 2: Silero VAD (${rmsPhrases.length} фраз)...`
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PASS 2 — Silero VAD внутри каждой RMS-фразы: точные in/out
+  // ══════════════════════════════════════════════════════════════════════════
+  const s16 = resampleTo16kLocal(data, sr)
+
+  // Запускаем VAD на всём файле один раз (эффективнее чем на каждой фразе)
+  push('  Pass 2: Silero VAD...', 'dim')
+  const vadProbs = await runSileroVADLocal(s16)
+
+  // VAD → raw speech segments (минимальная пауза 32мс = 1 фрейм)
+  const vadRaw = []
+  let inVad = false, vadStart = 0
+  vadProbs.forEach(f => {
+    if (!inVad && f.p >= 0.5)      { inVad = true;  vadStart = f.t - 0.032 }
+    else if (inVad && f.p < 0.35) { vadRaw.push({ start: Math.max(0, vadStart), end: f.t }); inVad = false }
+  })
+  if (inVad) vadRaw.push({ start: vadStart, end: duration })
+
+  push(`  Pass 2 ✓ — ${vadRaw.length} VAD сегментов`, 'ok')
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MERGE: для каждой RMS-фразы берём VAD-сегменты внутри неё
+  // Затем склеиваем VAD-сегменты чтобы получить субтитры 0.9–2.5с
+  // ══════════════════════════════════════════════════════════════════════════
+  const bufSec    = bufMs / 1000
+  const subtitles = []  // итоговые сегменты
+
+  for (const phrase of rmsPhrases) {
+    // VAD сегменты внутри этой фразы
+    const inPhrase = vadRaw.filter(v => v.start >= phrase.start - 0.05 && v.end <= phrase.end + 0.05)
+
+    if (inPhrase.length === 0) {
+      // Нет VAD внутри фразы — берём саму фразу целиком
+      subtitles.push({ start: phrase.start, end: phrase.end, src: 'rms-only' })
+      continue
+    }
+
+    // Склеиваем VAD-сегменты в субтитры 0.9–2.5с
+    let bucket = { start: inPhrase[0].start, end: inPhrase[0].end }
+
+    for (let i = 1; i < inPhrase.length; i++) {
+      const seg = inPhrase[i]
+      const bucketDur   = bucket.end   - bucket.start
+      const mergedDur   = seg.end      - bucket.start
+      const gap         = seg.start    - bucket.end
+
+      if (mergedDur <= TP_MAX && gap < 0.5) {
+        // Влезает в maxDur и пауза небольшая — продолжаем накапливать
+        bucket.end = seg.end
+      } else {
+        // Не влезает → финализируем bucket
+        if (bucketDur >= TP_MIN) {
+          subtitles.push({ ...bucket, src: 'vad' })
+        } else {
+          // Короткий bucket (< 0.9с) — склеиваем со следующим если возможно
+          // Не выбрасываем — субтитр остаётся но короткий (< TP_MIN)
+          subtitles.push({ ...bucket, src: 'vad-short' })
+        }
+        bucket = { start: seg.start, end: seg.end }
+      }
+    }
+    // Последний bucket в фразе
+    const lastDur = bucket.end - bucket.start
+    if (lastDur >= TP_MIN) {
+      subtitles.push({ ...bucket, src: 'vad' })
+    } else if (subtitles.length > 0 && subtitles[subtitles.length-1].src !== 'rms-only') {
+      // Слишком короткий последний — прилипить к предыдущему если не превысит max
+      const prev = subtitles[subtitles.length-1]
+      if (bucket.end - prev.start <= TP_MAX) {
+        prev.end = bucket.end; prev.src = 'vad-merged'
+      } else {
+        subtitles.push({ ...bucket, src: 'vad-short' })
+      }
+    } else {
+      subtitles.push({ ...bucket, src: 'vad-short' })
+    }
+  }
+
+  // ── Применяем буфер ±bufSec ───────────────────────────────────────────────
+  const buffered = subtitles.map((s, i) => ({
+    start: Math.max(0,        +(s.start - bufSec).toFixed(3)),
+    end:   Math.min(duration, +(s.end   + bufSec).toFixed(3)),
+    src:   s.src,
+  }))
+
+  // ── Убираем перекрытия от буфера ─────────────────────────────────────────
+  for (let i = 1; i < buffered.length; i++) {
+    if (buffered[i].start < buffered[i-1].end)
+      buffered[i].start = buffered[i-1].end
+  }
+
+  // Статистика
+  const durs    = buffered.map(s => s.end - s.start)
+  const avg     = durs.reduce((a,b)=>a+b,0)/durs.length
+  const below   = durs.filter(d => d < TP_MIN).length
+  const above   = durs.filter(d => d > TP_MAX).length
+  const nominal = durs.filter(d => d >= TP_MIN && d <= TP_MAX).length
+
+  const statsText = `N=${buffered.length} | avg=${avg.toFixed(2)}с | ` +
+    `✓номинал:${nominal} | ↓<${TP_MIN}с:${below} | ↑>${TP_MAX}с:${above}`
+
+  push(`  Result: ${statsText}`, 'ok')
+  push('─────────────────────────────────────────────────────', 'dim')
+
+  document.getElementById('tpResult').textContent = `✓ ${statsText}`
+
+  const srcCounts = {}
+  buffered.forEach(s => srcCounts[s.src] = (srcCounts[s.src]||0)+1)
+  document.getElementById('tpStats').textContent =
+    Object.entries(srcCounts).map(([k,v])=>`${k}:${v}`).join(' | ')
+
+  // Передаём в segments для отображения и отправки
+  segments = buffered.map(s => ({ start: s.start, end: s.end }))
+  renderSegs()
+  drawWaveform()
+}
+
+// ═══ SILERO VAD + BPM + LUFS DETECTOR ════════════════════════════════════════
+let sileroEnabled=false, sileroSegs=[], sileroSpeechSegs=[], sileroWindows=[], sileroSession=null
+
+function toggleSilero(){
+  sileroEnabled=!sileroEnabled
+  const btn=document.getElementById('sileroToggleBtn'),panel=document.getElementById('sileroPanel')
+  btn.textContent='🔊 Silero VAD детектор: '+(sileroEnabled?'ВКЛ':'ВЫКЛ')
+  btn.classList.toggle('active',sileroEnabled); panel.classList.toggle('show',sileroEnabled)
+  document.getElementById('sileroStatus').textContent=sileroEnabled?'← настрой и нажми "Анализировать"':'← VAD + RMS energy = музыка/не-речь'
+  if(!sileroEnabled){sileroSegs=[];sileroSpeechSegs=[];sileroWindows=[];if(audioBuf)drawWaveform()}
+}
+
+function resampleTo16kLocal(samples,srcRate){
+  if(srcRate===16000)return samples
+  const ratio=16000/srcRate,out=new Float32Array(Math.round(samples.length*ratio))
+  for(let i=0;i<out.length;i++){const pos=i/ratio,lo=Math.floor(pos),hi=Math.min(lo+1,samples.length-1);out[i]=samples[lo]*(1-(pos-lo))+samples[hi]*(pos-lo)}
+  return out
+}
+
+async function runSileroVADLocal(s16){
+  if(!sileroSession){
+    ort.env.wasm.numThreads=1
+    const resp=await fetch('./vad/silero_vad_legacy.onnx')
+    if(!resp.ok)throw new Error('Silero ONNX: HTTP '+resp.status)
+    sileroSession=await ort.InferenceSession.create(new Uint8Array(await resp.arrayBuffer()),{executionProviders:['wasm'],graphOptimizationLevel:'all'})
+    push('  ✓ Silero модель загружена','ok')
+  }
+  const FRAME=512; let h=new Float32Array(128),c=new Float32Array(128); const probs=[]
+  for(let off=0;off+FRAME<=s16.length;off+=FRAME){
+    const out=await sileroSession.run({
+      input:new ort.Tensor('float32',s16.slice(off,off+FRAME),[1,FRAME]),
+      sr:new ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[]),
+      h:new ort.Tensor('float32',h,[2,1,64]),c:new ort.Tensor('float32',c,[2,1,64])
+    })
+    probs.push({t:(off+FRAME)/16000,p:out.output.data[0]});h=out.hn.data;c=out.cn.data
+  }
+  return probs
+}
+
+function computeRmsEnv(samples,sr){
+  const HOP=Math.floor(sr*0.010),env=[]
+  for(let i=0;i+HOP<=samples.length;i+=HOP){
+    let s=0;for(let j=0;j<HOP;j++)s+=samples[i+j]*samples[i+j]
+    env.push({t:(i+HOP/2)/sr,rms:Math.sqrt(s/HOP)})
+  }
+  return env
+}
+
+function detectBPMLocal(vals,hopMs,bMin,bMax){
+  const N=vals.length; if(N<20)return{bpm:0,r2:0}
+  const m=vals.reduce((a,b)=>a+b,0)/N; const x=vals.map(v=>v-m)
+  const r0=x.reduce((a,b)=>a+b*b,0); if(!r0)return{bpm:0,r2:0}
+  let bestR2=0,bestLag=0
+  const lagMin=Math.floor(60000/bMax/hopMs),lagMax=Math.ceil(60000/bMin/hopMs)
+  for(let lag=lagMin;lag<=lagMax&&lag<N;lag++){
+    let rL=0;for(let i=0;i<N-lag;i++)rL+=x[i]*x[i+lag]
+    const r2=rL/r0;if(r2>bestR2){bestR2=r2;bestLag=lag}
+  }
+  return{bpm:bestLag>0?Math.round(60000/(bestLag*hopMs)):0,r2:bestR2}
+}
+
+function computeLUFSLocal(raw,sr){
+  const N=raw.length; if(!N)return -Infinity
+  const hp=new Float32Array(N); hp[0]=raw[0]
+  for(let i=1;i<N;i++)hp[i]=raw[i]-raw[i-1]*0.98
+  const ms=hp.reduce((a,b)=>a+b*b,0)/N
+  return ms>0?10*Math.log10(ms)-0.691:-Infinity
+}
+
+async function runSileroDetector(){
+  if(!audioBuf)return
+  document.getElementById('sileroResult').textContent='⏳ Загружаю Silero и анализирую...'
+  try{
+    const sr=audioBuf.sampleRate,raw=audioBuf.getChannelData(0)
+    const s16=resampleTo16kLocal(raw,sr)
+    const winMs=+document.getElementById('sWindowMs').value
+    const ePct=+document.getElementById('sVadEnergy').value/100
+    const [bMin,bMax]=document.getElementById('sBpmRange').value.split('-').map(Number)
+    const bThresh=+document.getElementById('sBpmThresh').value
+    const lThresh=+document.getElementById('sLufsThresh').value
+
+    push('','dim'); push('─── SILERO VAD + BPM + LUFS ─────────────────────────────','dim')
+    push(`Параметры: energy≥${(ePct*100).toFixed(0)}% | BPM=${bMin}-${bMax} R²≥${bThresh} | LUFS≥${lThresh}dB | win=${winMs}мс`,'dim')
+
+    push('  Phase 1: Silero VAD...','dim')
+    const vadProbs=await runSileroVADLocal(s16)
+    push(`  ✓ ${vadProbs.length} фреймов`,'ok')
+
+    const env=computeRmsEnv(raw,sr)
+    const sortedRms=[...env.map(e=>e.rms)].sort((a,b)=>a-b)
+    const p90=sortedRms[Math.floor(sortedRms.length*0.90)]
+    const eThresh=p90*ePct/0.10
+
+    const winSec=winMs/1000,numWins=Math.ceil(duration/winSec)
+    sileroWindows=[]
+
+    for(let wi=0;wi<numWins;wi++){
+      const t0=wi*winSec,t1=Math.min((wi+1)*winSec,duration)
+      const vInWin=vadProbs.filter(f=>f.t>=t0&&f.t<t1)
+      const nsFrac=vInWin.length?vInWin.filter(f=>f.p<0.5).length/vInWin.length:0
+      const eInWin=env.filter(e=>e.t>=t0&&e.t<t1)
+      const meanRms=eInWin.length?eInWin.reduce((a,b)=>a+b.rms,0)/eInWin.length:0
+      const {bpm,r2:bR2}=detectBPMLocal(eInWin.map(e=>e.rms),10,bMin,bMax)
+      const s0=Math.floor(t0*sr),s1=Math.min(Math.floor(t1*sr),raw.length)
+      const lufs=computeLUFSLocal(raw.slice(s0,s1),sr)
+      const vadScore=(nsFrac>0.6&&meanRms>eThresh)?1:0
+      const bpmScore=bR2>=bThresh?1:0
+      const lufsScore=lufs>=-6?1:0  // info-only, не используется в детекции
+      // Музыка = non-speech И (есть ритм BPM)
+      // Одного VAD недостаточно — паузы тоже non-speech
+      const isMusic = nsFrac>=0.6 && meanRms>eThresh && bR2>=bThresh
+      const total = (isMusic ? 2 : 0)  // for bars viz
+      sileroWindows.push({t0,t1,nsFrac,meanRms,bpm,bR2,lufs,vadScore,bpmScore,lufsScore,total,isMusic})
+    }
+
+    sileroSegs=[]
+    let inM=false,sStart=0
+    sileroWindows.forEach(w=>{
+      if(!inM&&w.isMusic){inM=true;sStart=w.t0}
+      else if(inM&&!w.isMusic){sileroSegs.push({start:sStart,end:w.t0,type:'music'});inM=false}
+    })
+    if(inM)sileroSegs.push({start:sStart,end:duration,type:'music'})
+
+    // Build VAD speech segments from raw probs for visualization
+    sileroSpeechSegs=[]
+    let inSp=false,spStart=0
+    vadProbs.forEach(f=>{
+      if(!inSp&&f.p>=0.5){inSp=true;spStart=f.t-0.032}
+      else if(inSp&&f.p<0.35){sileroSpeechSegs.push({start:Math.max(0,spStart),end:f.t});inSp=false}
+    })
+    if(inSp)sileroSpeechSegs.push({start:spStart,end:duration})
+
+    const totSec=sileroSegs.reduce((a,s)=>a+(s.end-s.start),0)
+    const info=`🔊 ${sileroSegs.length} музык.регион(ов) · ${totSec.toFixed(1)}с | 🗣 ${sileroSpeechSegs.length} речевых сег`
+    document.getElementById('sileroResult').textContent=info
+    push(info,'ok')
+    sileroSegs.forEach((s,i)=>{
+      const w=sileroWindows.find(w=>Math.abs(w.t0-s.start)<winSec)||{}
+      // Find best window in region (highest BPM R²)
+      const wInRange=sileroWindows.filter(w=>w.t0>=s.start&&w.t0<s.end)
+      const bestW=wInRange.sort((a,b)=>b.bR2-a.bR2)[0]||{}
+      push(`  [S${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с | BPM≈${bestW.bpm||'?'} R²=${bestW.bR2?.toFixed(2)||'?'} LUFS≈${bestW.lufs?.toFixed(1)||'?'}dB nonSpeech≈${((bestW.nsFrac||0)*100).toFixed(0)}%`,'ok')
+    })
+    push('─────────────────────────────────────────────────────','dim')
+    drawSileroScores(); drawWaveform(); renderSegs()
+  }catch(e){
+    push('  ✗ '+e.message,'err')
+    document.getElementById('sileroResult').textContent='✗ '+e.message
+  }
+}
+
+function drawSileroScores(){
+  if(!sileroWindows.length)return
+  const cv=document.getElementById('sileroScoreCanvas'),ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800,H=50;cv.width=W;cv.height=H
+  ctx.fillStyle='#040810';ctx.fillRect(0,0,W,H)
+  const bw=W/sileroWindows.length
+  sileroWindows.forEach((w,i)=>{
+    const x=i*bw
+    if(w.vadScore){ctx.fillStyle='rgba(74,222,128,0.5)';ctx.fillRect(x,H*0.6,bw-1,H*0.4)}
+    const bH=w.bR2*H*0.4
+    ctx.fillStyle=`rgba(20,184,166,${w.bpmScore?0.8:0.2})`;ctx.fillRect(x,H*0.6-bH,bw-1,bH)
+    const lN=Math.max(0,Math.min(1,(w.lufs+40)/30))
+    ctx.fillStyle=`rgba(124,58,237,${w.lufsScore?0.8:0.2})`;ctx.fillRect(x,0,bw-1,lN*H*0.5)
+    if(w.isMusic){ctx.fillStyle='rgba(249,115,22,0.9)';ctx.fillRect(x,H-4,bw-1,4)}
+  })
+  document.getElementById('sileroScoreBars').style.display='block'
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FFT SPECTROGRAM + CONSTELLATION MAP (Shazam-approach)
+// ═══════════════════════════════════════════════════════════════════════════════
+let fftPeaks = []   // [{t, f, mag}] — constellation map points
+
+// ── Hamming window (уже есть как hammingWindow в MFCC коде) ──────────────────
+function hamming(N) {
+  return Float32Array.from({length:N}, (_,n) => 0.54 - 0.46*Math.cos(2*Math.PI*n/(N-1)))
+}
+
+// ── Coolkey-Tukey FFT (уже есть как fftMagnitude, но нам нужны dB) ───────────
+function fftMagDB(frame) {
+  const N = frame.length
+  const re = new Float32Array(N), im = new Float32Array(N)
+  for (let i = 0; i < N; i++) re[i] = frame[i]
+  // bit reversal
+  for (let i=1,j=0; i<N; i++) {
+    let bit=N>>1; for(;j&bit;bit>>=1)j^=bit; j^=bit
+    if(i<j){[re[i],re[j]]=[re[j],re[i]];[im[i],im[j]]=[im[j],im[i]]}
+  }
+  // butterfly
+  for (let len=2;len<=N;len<<=1) {
+    const ang=-2*Math.PI/len,wR=Math.cos(ang),wI=Math.sin(ang)
+    for (let i=0;i<N;i+=len){
+      let uR=1,uI=0
+      for (let j=0;j<len/2;j++){
+        const vR=re[i+j+len/2]*uR-im[i+j+len/2]*uI
+        const vI=re[i+j+len/2]*uI+im[i+j+len/2]*uR
+        re[i+j+len/2]=re[i+j]-vR;im[i+j+len/2]=im[i+j]-vI
+        re[i+j]+=vR;im[i+j]+=vI
+        const tmp=uR*wR-uI*wI;uI=uR*wI+uI*wR;uR=tmp
+      }
+    }
+  }
+  const db = new Float32Array(N/2)
+  for (let k=0;k<N/2;k++) {
+    const mag = Math.sqrt(re[k]*re[k]+im[k]*im[k])
+    db[k] = mag>0 ? 20*Math.log10(mag/N) : -100
+  }
+  return db
+}
+
+// ── dB → RGB color (спектрограмма) ──────────────────────────────────────────
+function dbToColor(db, minDb=-80, maxDb=-10) {
+  const t = Math.max(0, Math.min(1, (db - minDb) / (maxDb - minDb)))
+  // Градиент: тёмно-синий → синий → фиолетовый → жёлтый → красный → белый
+  if (t < 0.2) {
+    const s = t/0.2
+    return [Math.floor(s*29), Math.floor(s*78), Math.floor(s*216)]
+  } else if (t < 0.4) {
+    const s=(t-0.2)/0.2
+    return [Math.floor(29+s*(124-29)), Math.floor(78+s*(58-78)), Math.floor(216+s*(237-216))]
+  } else if (t < 0.6) {
+    const s=(t-0.4)/0.2
+    return [Math.floor(124+s*(245-124)), Math.floor(58+s*(158-58)), Math.floor(237+s*(11-237))]
+  } else if (t < 0.8) {
+    const s=(t-0.6)/0.2
+    return [Math.floor(245+s*(239-245)), Math.floor(158+s*(68-158)), Math.floor(11+s*(11-11))]
+  } else {
+    const s=(t-0.8)/0.2
+    return [Math.floor(239+s*(255-239)), Math.floor(68+s*(255-68)), Math.floor(11+s*(255-11))]
+  }
+}
+
+async function runFFTSpectrogram() {
+  if (!audioBuf) return
+  const t0 = performance.now()
+
+  const fftSize    = +document.getElementById('fftSize').value
+  const overlapPct = +document.getElementById('fftOverlap').value / 100
+  const maxFreq    = +document.getElementById('fftMaxFreq').value
+  const peakThresh = +document.getElementById('fftPeakThresh').value
+  const peakZone   = +document.getElementById('fftPeakZone').value
+
+  const sr       = audioBuf.sampleRate
+  const data     = audioBuf.getChannelData(0)
+  const hop      = Math.floor(fftSize * (1 - overlapPct))
+  const win      = hamming(fftSize)
+  const numFrames = Math.floor((data.length - fftSize) / hop)
+  const numBins   = fftSize / 2
+  const freqPerBin = sr / fftSize
+  const maxBin   = Math.min(numBins, Math.ceil(maxFreq / freqPerBin))
+
+  push('', 'dim')
+  push('─── FFT СПЕКТРОГРАММА + CONSTELLATION MAP ──────────────', 'dim')
+  push(`FFT size=${fftSize} | hop=${hop} (overlap=${(overlapPct*100).toFixed(0)}%) | maxFreq=${maxFreq/1000}кГц | порог=${peakThresh}dB | зона=${peakZone}Гц`, 'dim')
+  push(`Файл: ${data.length} сэмплов @ ${sr}Hz → ${numFrames} фреймов × ${numBins} bin`, 'dim')
+
+  // ── Вычисляем спектрограмму ─────────────────────────────────────────────
+  // Для скорости обрабатываем через setTimeout chunks
+  push('  Вычисляю спектрограмму...', 'dim')
+  const spectro = []  // spectro[frame][bin] = dB
+
+  const CHUNK = 200  // фреймов за раз
+  for (let fi = 0; fi < numFrames; fi += CHUNK) {
+    const end = Math.min(fi + CHUNK, numFrames)
+    for (let f = fi; f < end; f++) {
+      const off = f * hop
+      const frame = new Float32Array(fftSize)
+      for (let i = 0; i < fftSize; i++) frame[i] = (data[off+i]||0) * win[i]
+      spectro.push(fftMagDB(frame))
+    }
+    // Yield to UI каждые CHUNK фреймов
+    if (fi % (CHUNK*5) === 0) await new Promise(r=>setTimeout(r,0))
+  }
+
+  push(`  ✓ Спектрограмма: ${spectro.length} фреймов × ${maxBin} bins`, 'ok')
+
+  // ── Constellation map — пики энергии ───────────────────────────────────
+  // Shazam-подход: для каждого фрейма ищем локальные максимумы выше порога
+  // Условие пика: db[fi][bi] > порог И локальный максимум в ±zoneSize bins
+  push('  Ищу пики (Constellation map)...', 'dim')
+  fftPeaks = []
+  const zoneBins = Math.ceil(peakZone / freqPerBin)
+
+  for (let fi = 1; fi < spectro.length - 1; fi++) {
+    const frame = spectro[fi]
+    const t = (fi * hop + fftSize/2) / sr
+
+    for (let bi = zoneBins; bi < maxBin - zoneBins; bi++) {
+      const val = frame[bi]
+      if (val < peakThresh) continue
+
+      // Локальный максимум в частотной оси (±zoneBins)
+      let isLocalMax = true
+      for (let dbi = -zoneBins; dbi <= zoneBins; dbi++) {
+        if (dbi === 0) continue
+        if (frame[bi+dbi] >= val) { isLocalMax = false; break }
+      }
+      if (!isLocalMax) continue
+
+      // Локальный максимум во временной оси (±2 фрейма)
+      let isTimeMax = true
+      for (let dfi = -2; dfi <= 2; dfi++) {
+        if (dfi === 0 || fi+dfi < 0 || fi+dfi >= spectro.length) continue
+        if (spectro[fi+dfi][bi] >= val) { isTimeMax = false; break }
+      }
+      if (!isTimeMax) continue
+
+      fftPeaks.push({ t, f: bi * freqPerBin, mag: val, fi, bi })
+    }
+  }
+
+  push(`  ✓ Constellation map: ${fftPeaks.length} пиков`, 'ok')
+
+  // ── Анализ: речевые события по паузам в пиках ──────────────────────────
+  // Группируем пики по времени → находим кластеры → паузы = границы фраз
+  const peakTimes = [...new Set(fftPeaks.map(p => Math.round(p.t*10)/10))].sort((a,b)=>a-b)
+  let speechEvents = 0, silencePeriods = []
+  for (let i = 1; i < peakTimes.length; i++) {
+    const gap = peakTimes[i] - peakTimes[i-1]
+    if (gap > 0.3) silencePeriods.push({ t: peakTimes[i-1], gap: gap.toFixed(2) })
+    else speechEvents++
+  }
+
+  push(`  Речевых событий: ${speechEvents} | Пауз ≥ 0.3с: ${silencePeriods.length}`, 'ok')
+  silencePeriods.slice(0, 10).forEach(s =>
+    push(`    Пауза @ ${s.t.toFixed(2)}с: ${s.gap}с`, 'dim')
+  )
+
+  // ── Статистика по диапазонам частот ───────────────────────────────────
+  const bands = [
+    { name:'Низкие <300Гц',    lo:0,    hi:300   },
+    { name:'Речь 300-3кГц',   lo:300,  hi:3000  },
+    { name:'Присутствие 3-6кГц', lo:3000, hi:6000 },
+    { name:'Воздух >6кГц',    lo:6000, hi:maxFreq },
+  ]
+  push('  Распределение пиков по диапазонам:', 'dim')
+  bands.forEach(b => {
+    const n = fftPeaks.filter(p => p.f>=b.lo && p.f<b.hi).length
+    const pct = fftPeaks.length ? (n/fftPeaks.length*100).toFixed(1) : 0
+    push(`    ${b.name}: ${n} пиков (${pct}%)`, 'dim')
+  })
+
+  const elapsed = Math.round(performance.now() - t0)
+  push(`  ⏱ Итого: ${elapsed}мс`, 'ok')
+  push('─────────────────────────────────────────────────────', 'dim')
+
+  document.getElementById('fftResult').textContent =
+    `✓ ${spectro.length} фреймов | ${fftPeaks.length} пиков | ${silencePeriods.length} пауз | ⏱ ${elapsed}мс`
+
+  // ── Отрисовка ──────────────────────────────────────────────────────────
+  document.getElementById('fftResultArea').style.display = 'block'
+  document.getElementById('spectroMid').textContent = (duration/2).toFixed(1)+'с'
+  document.getElementById('spectroDur').textContent = duration.toFixed(1)+'с'
+
+  spectroFrameCount = spectro.length
+  drawSpectrogram(spectro, maxBin, numFrames)
+  drawConstellationMap(spectro.length, maxBin, freqPerBin, hop)
+
+  // Если чекбокс → передать паузы как сегменты
+  if (document.getElementById('fftToSegments').checked) {
+    fftPeaksToSegments(silencePeriods)
+  }
+}
+
+function drawSpectrogram(spectro, maxBin, numFrames) {
+  const cv = document.getElementById('spectroCanvas')
+  const W  = cv.offsetWidth || 800, H = 120
+  cv.width = W; cv.height = H
+  const ctx = cv.getContext('2d')
+  ctx.fillStyle = '#040810'; ctx.fillRect(0,0,W,H)
+
+  const imgData = ctx.createImageData(W, H)
+  const pix     = imgData.data
+
+  for (let x = 0; x < W; x++) {
+    const fi = Math.floor(x / W * spectro.length)
+    if (fi >= spectro.length) continue
+    const frame = spectro[fi]
+
+    for (let y = 0; y < H; y++) {
+      // y=0 → верх → высокая частота; y=H → низ → 0Гц
+      const bi = Math.floor((1 - y/H) * maxBin)
+      if (bi >= frame.length) continue
+      const [r,g,b] = dbToColor(frame[bi])
+      const idx = (y*W+x)*4
+      pix[idx]=r; pix[idx+1]=g; pix[idx+2]=b; pix[idx+3]=255
+    }
+  }
+  ctx.putImageData(imgData, 0, 0)
+
+  // Частотные метки
+  const sr = audioBuf.sampleRate
+  const fftSize = +document.getElementById('fftSize').value
+  const freqPerBin = sr / fftSize
+  const maxFreq = +document.getElementById('fftMaxFreq').value
+  ;[500,1000,2000,4000,8000].filter(f=>f<=maxFreq).forEach(f => {
+    const y = H - Math.floor(f/maxFreq*H)
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke()
+    ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.font='8px monospace'
+    ctx.fillText(f>=1000?`${f/1000}к`:f+'Гц', 2, y-2)
+  })
+}
+
+function drawConstellationMap(numFrames, maxBin, freqPerBin, hop) {
+  const cv  = document.getElementById('peaksCanvas')
+  const W   = cv.offsetWidth || 800, H = 60
+  cv.width  = W; cv.height = H
+  const ctx = cv.getContext('2d')
+  ctx.fillStyle = '#040810'; ctx.fillRect(0,0,W,H)
+
+  const sr  = audioBuf.sampleRate
+  const maxFreq = +document.getElementById('fftMaxFreq').value
+  const totFrames = spectroFrameCount || numFrames
+
+  // Горизонтальная линия посередины
+  ctx.strokeStyle = '#111827'; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke()
+
+  // Пики
+  fftPeaks.forEach(p => {
+    const x = p.t / duration * W
+    const y = H - Math.floor(p.f / maxFreq * H)
+    // Цвет по амплитуде
+    const brightness = Math.max(0, Math.min(1, (p.mag + 60) / 50))
+    const r = Math.floor(34 + brightness * (251-34))
+    const g = Math.floor(211 + brightness * (191-211))
+    const b = Math.floor(238 + brightness * (36-238))
+    ctx.fillStyle = `rgb(${r},${g},${b})`
+    ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI*2); ctx.fill()
+  })
+
+  // Временные метки
+  ;[0.25, 0.5, 0.75].forEach(frac => {
+    const x = frac*W
+    ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=1
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke()
+    ctx.fillStyle='rgba(255,255,255,0.4)'; ctx.font='8px monospace'
+    ctx.fillText((frac*duration).toFixed(0)+'с', x+2, H-3)
+  })
+}
+let spectroFrameCount = 0
+
+function fftPeaksToSegments(silencePeriods) {
+  if (!silencePeriods.length) return
+  // Строим сегменты по паузам
+  const boundaries = [0, ...silencePeriods.map(s=>+s.t), duration]
+  const newSegs = []
+  for (let i = 0; i < boundaries.length-1; i++) {
+    const dur = boundaries[i+1] - boundaries[i]
+    if (dur >= 0.3) newSegs.push({ start: +boundaries[i].toFixed(3), end: +boundaries[i+1].toFixed(3) })
+  }
+  segments = newSegs
+  renderSegs()
+  drawWaveform()
+  push(`  → ${newSegs.length} сегментов из пиков FFT переданы в редактор`, 'ok')
+}
+
+function toggleMFCC() {
+  mfccEnabled = !mfccEnabled
+  const btn = document.getElementById('mfccToggleBtn')
+  const panel = document.getElementById('mfccPanel')
+  btn.textContent = '🧠 MFCC-1 классификатор: ' + (mfccEnabled ? 'ВКЛ' : 'ВЫКЛ')
+  btn.classList.toggle('active', mfccEnabled)
+  panel.classList.toggle('show', mfccEnabled)
+  document.getElementById('mfccStatus').textContent = mfccEnabled
+    ? '← настрой параметры и нажми "Анализировать"'
+    : '← включи для анализа музыка/речь'
+  if (!mfccEnabled) { mfccRegions=[]; mfccSegs=[]; if(audioBuf) drawWaveform() }
+}
+
+function runMFCC() {
+  if (!audioBuf) return
+  const sensitivity = +document.getElementById('mfccThresh').value  // 0..100%
+  const winMs   = +document.getElementById('mfccWindow').value
+  const nMels   = Math.min(+document.getElementById('mfccMels').value, 28)  // NaN guard
+  const sr      = audioBuf.sampleRate
+
+  const FFT_SIZE  = 512
+  const HOP_SIZE  = Math.floor(sr * 0.010)   // 10ms hop
+  const FRAME_SIZE = FFT_SIZE                 // 512 samples = 32ms @ 16kHz
+  const hamming   = hammingWindow(FRAME_SIZE)
+  const melBank   = buildMelFilterbank(FFT_SIZE, sr, nMels)
+  const data      = audioBuf.getChannelData(0)
+
+  // Compute MFCC-1 per hop
+  const mfcc1_frames = []
+  const mfcc1_times  = []
+  for (let offset = 0; offset + FRAME_SIZE < data.length; offset += HOP_SIZE) {
+    const frame = new Float32Array(FRAME_SIZE)
+    for (let i = 0; i < FRAME_SIZE; i++) frame[i] = (data[offset+i]||0) * hamming[i]
+    const mag   = fftMagnitude(frame)
+    const val   = computeFrameMFCC1(mag, melBank)
+    mfcc1_frames.push(val)
+    mfcc1_times.push(offset / sr)
+  }
+
+  // ── Вычисляем скользящее окно: MEAN и STD MFCC-1 per window ────────────────
+  // Ключевая идея: музыка = высокий mean + НИЗКИЙ std (устойчивый тон)
+  //                речь   = высокий mean + ВЫСОКИЙ std (гласный→согласный→пауза)
+  const winFrames = Math.ceil(winMs / 10)
+  const windowStats = mfcc1_frames.map((_, i) => {
+    const lo = Math.max(0, i - winFrames)
+    const hi = Math.min(mfcc1_frames.length, i + 1)
+    const slice = mfcc1_frames.slice(lo, hi).filter(v => isFinite(v))
+    if (slice.length < 3) return { mean: 0, std: 999 }
+    const m = slice.reduce((a,b)=>a+b,0) / slice.length
+    const s = Math.sqrt(slice.reduce((a,b)=>a+(b-m)**2,0) / slice.length)
+    return { mean: m, std: s }
+  })
+
+  // Stats for threshold calibration (on mean values only)
+  const meanVals = windowStats.map(w=>w.mean).filter(v=>isFinite(v)).sort((a,b)=>a-b)
+  if (!meanVals.length) { document.getElementById('mfccResult').textContent='✗ NaN — уменьши Мел-фильтры'; return }
+  const p50  = meanVals[Math.floor(meanVals.length * 0.50)]
+  const p85  = meanVals[Math.floor(meanVals.length * 0.85)]
+  const p95  = meanVals[Math.floor(meanVals.length * 0.95)]
+  const mean = meanVals.reduce((a,b)=>a+b,0)/meanVals.length
+  const std  = Math.sqrt(meanVals.reduce((a,b)=>a+(b-mean)**2,0)/meanVals.length)
+
+  const absThresh = p95 - (sensitivity / 100) * (p95 - p50)
+  const varMax    = +document.getElementById('mfccVarMax').value
+  const minDur    = +document.getElementById('mfccMinDur').value
+
+  // ── Детекция: MFCC-1 > порог AND дисперсия < varMax → тональный регион ────
+  // Это и есть правильный классификатор: высокий + устойчивый = музыка
+  mfccRegions = []
+  let inMusic = false, rStart = 0, rMfcc = 0
+  windowStats.forEach((w, fi) => {
+    const t        = mfcc1_times[fi]
+    const isTonal  = w.mean > absThresh && w.std <= varMax
+    if (!inMusic && isTonal)  { inMusic = true;  rStart = t; rMfcc = w.mean }
+    else if (inMusic && !isTonal) {
+      mfccRegions.push({ start: rStart, end: t, mfcc1_avg: rMfcc, isMusic: true })
+      inMusic = false
+    }
+  })
+  if (inMusic) mfccRegions.push({ start: rStart, end: duration, mfcc1_avg: rMfcc, isMusic: true })
+
+  // Merge close regions (gap < 150ms)
+  const merged = []
+  mfccRegions.forEach(r => {
+    if (merged.length && r.start - merged[merged.length-1].end < 0.15)
+      merged[merged.length-1].end = r.end
+    else merged.push({...r})
+  })
+  mfccRegions = merged
+
+  // Min duration filter — последний рубеж против артефактов
+  mfccRegions = mfccRegions.filter(r => (r.end - r.start) >= minDur)
+
+  // Build mfccSegs to show in segment list
+  mfccSegs = mfccRegions.map((r,i) => ({
+    start:   +r.start.toFixed(3),
+    end:     +r.end.toFixed(3),
+    isMusic: true,
+    mfcc1:   r.mfcc1_avg.toFixed(2),
+  }))
+
+  const totalMusicSec = mfccSegs.reduce((a,s)=>a+(s.end-s.start),0)
+  const info = `🧠 MFCC-1: чувств=${sensitivity}% σ≤${varMax} minDur≥${minDur}с → порог=${absThresh.toFixed(2)} | ` +
+    `p50=${p50.toFixed(1)} p85=${p85.toFixed(1)} p95=${p95.toFixed(1)} | ` +
+    `окно=${winMs}мс | фильтры=${nMels} | ` +
+    `тональных: ${mfccSegs.length} регионов · ${totalMusicSec.toFixed(1)}с`
+
+  document.getElementById('mfccResult').textContent = info
+  push('', 'dim')
+  push('─── MFCC-1 АНАЛИЗ ─────────────────────────────', 'dim')
+  push(info, 'warn')
+  push(`Параметры: чувств=${sensitivity}% | σMax=${varMax} | минДур=${minDur}с | p50=${p50.toFixed(2)} p85=${p85.toFixed(2)} p95=${p95.toFixed(2)} | порог=${absThresh.toFixed(2)} | window=${winMs}мс | n_mels=${nMels}`, 'dim')
+  mfccSegs.forEach((s,i) => push(`  [M${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с (${(s.end-s.start).toFixed(2)}с) MFCC-1≈${s.mfcc1}`, 'warn'))
+  push('──────────────────────────────────────────────', 'dim')
+
+  drawWaveform()
+  renderSegsWithMFCC()
+}
+
+function renderSegsWithMFCC() {
+  const list = document.getElementById('segList')
+  list.innerHTML = ''
+  // Combine: first mfccSegs (yellow), then regular segments
+  // Show in time order
+  const allItems = []
+  mfccSegs.forEach(s => allItems.push({...s, _type:'music'}))
+  sileroSegs.forEach((s,i) => allItems.push({...s, _sIdx:i, _type:'silero'}))
+  segments.forEach((s,i) => allItems.push({...s, _idx:i, _type:'speech'}))
+  allItems.sort((a,b) => a.start - b.start)
+
+  document.getElementById('segCount').textContent =
+    `· ${segments.length} сег` + (mfccSegs.length ? ` | 🟡 ${mfccSegs.length} MFCC` : '') + (sileroSegs.length ? ` | 🟠 ${sileroSegs.length} VAD` : '')
+
+  allItems.forEach((s, rowI) => {
+    const row = document.createElement('div')
+    const isM = s._type === 'music'
+    const isS = s._type === 'silero'
+    row.className = 'seg-row' + (isM ? ' is-music' : isS ? '' : '')
+    if (!isM) { row.draggable = true; row.dataset.idx = s._idx }
+
+    const label  = isM ? `M${mfccSegs.indexOf(s)+1}` : isS ? `S${s._sIdx+1}` : (s._idx+1)
+    const badge  = isM ? `<span class="mfcc-badge">♪ MFCC-1</span>` : isS ? `<span class="silero-badge">🔊 VAD</span>` : ''
+    const delBtn = isM
+      ? `<button class="btn-del" onclick="removeMfccSeg(${mfccSegs.indexOf(s)})" title="Убрать из отправки">×</button>`
+      : isS
+      ? `<button class="btn-del" onclick="sileroSegs.splice(${s._sIdx},1);drawWaveform();renderSegs()" title="Убрать">×</button>`
+      : `<button class="btn-del" onclick="removeSeg(${s._idx})" ${segments.length<=2?'disabled':''}>×</button>`
+
+    row.innerHTML = `<span class="drag-handle">${isM ? '♪' : '⠿'}</span>` +
+      `<span class="seg-idx">[${label}]</span>` + badge +
+      `<span class="seg-lbl">start</span>` +
+      `<input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.start.toFixed(2)}" ` +
+        (isM ? `oninput="mfccSegs[${mfccSegs.indexOf(s)}].start=+this.value;drawWaveform()"` :
+               `oninput="segments[${s._idx}].start=+this.value;updateDur(${s._idx})"`) + `>` +
+      `<span class="seg-lbl">end</span>` +
+      `<input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.end.toFixed(2)}" ` +
+        (isM ? `oninput="mfccSegs[${mfccSegs.indexOf(s)}].end=+this.value;drawWaveform()"` :
+               `oninput="segments[${s._idx}].end=+this.value;updateDur(${s._idx})"`) + `>` +
+      `<span class="seg-dur">${(s.end-s.start).toFixed(1)}s</span>` +
+      delBtn
+
+    if (!isM) {
+      row.addEventListener('dragstart',e=>{dragSrc=s._idx;setTimeout(()=>row.classList.add('dragging'),0)})
+      row.addEventListener('dragend',()=>{row.classList.remove('dragging');document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'))})
+      row.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'));row.classList.add('drag-over')})
+      row.addEventListener('dragleave',()=>row.classList.remove('drag-over'))
+      row.addEventListener('drop',e=>{e.preventDefault();row.classList.remove('drag-over');const t=+row.dataset.idx;if(dragSrc===null||dragSrc===t)return;const m=segments.splice(dragSrc,1)[0];segments.splice(t,0,m);dragSrc=null;renderSegsWithMFCC()})
+    }
+    list.appendChild(row)
+  })
+}
+
+function removeMfccSeg(i) {
+  mfccSegs.splice(i, 1)
+  mfccRegions.splice(i, 1)
+  renderSegsWithMFCC()
+  drawWaveform()
+  push(`  [M${i+1}] удалён из отправки`, 'dim')
+}
+
+// ── Segments ──────────────────────────────────────────────────────────────────
+function renderSegs() {
+  if (mfccEnabled && mfccSegs.length) { renderSegsWithMFCC(); return }
+  const list=document.getElementById('segList'); list.innerHTML=''
+  document.getElementById('segCount').textContent=`· ${segments.length} шт`
+  segments.forEach((s,i)=>{
+    const row=document.createElement('div'); row.className='seg-row'; row.draggable=true; row.dataset.idx=i
+    row.innerHTML=`<span class="drag-handle">⠿</span><span class="seg-idx">[${i+1}]</span><span class="seg-lbl">start</span><input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.start.toFixed(2)}" oninput="segments[${i}].start=+this.value;updateDur(${i})"><span class="seg-lbl">end</span><input type="number" step="0.1" min="0" max="${duration.toFixed(1)}" value="${s.end.toFixed(2)}" oninput="segments[${i}].end=+this.value;updateDur(${i})"><span class="seg-dur" id="dur_${i}">${(s.end-s.start).toFixed(1)}s</span><button class="btn-del" onclick="removeSeg(${i})" ${segments.length<=2?'disabled':''}>×</button>`
+    row.addEventListener('dragstart',e=>{dragSrc=i;setTimeout(()=>row.classList.add('dragging'),0)})
+    row.addEventListener('dragend',()=>{row.classList.remove('dragging');document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'))})
+    row.addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.seg-row').forEach(r=>r.classList.remove('drag-over'));row.classList.add('drag-over')})
+    row.addEventListener('dragleave',()=>row.classList.remove('drag-over'))
+    row.addEventListener('drop',e=>{e.preventDefault();row.classList.remove('drag-over');const t=+row.dataset.idx;if(dragSrc===null||dragSrc===t)return;const m=segments.splice(dragSrc,1)[0];segments.splice(t,0,m);dragSrc=null;renderSegs();if(currentMode==='v12rms')drawWaveform();updateAsmPreview()})
+    list.appendChild(row)
+  })
+}
+function updateDur(i){const el=document.getElementById('dur_'+i);if(el)el.textContent=(segments[i].end-segments[i].start).toFixed(1)+'s';if(currentMode==='v12rms')drawWaveform();updateAsmPreview()}
+function addSeg(){const l=segments[segments.length-1];segments.push({start:l.end,end:+Math.min(l.end+10,duration).toFixed(1)});renderSegs();updateAsmPreview()}
+function removeSeg(i){if(segments.length<=2)return;segments.splice(i,1);renderSegs();updateAsmPreview()}
+
+// ── WAV utils ─────────────────────────────────────────────────────────────────
+function sliceToWav(buf,s0sec,s1sec){
+  const sr=buf.sampleRate,s0=Math.floor(s0sec*sr),s1=Math.min(Math.floor(s1sec*sr),buf.length),n=s1-s0
+  const ab=new ArrayBuffer(44+n*2),v=new DataView(ab);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+n*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,n*2,true);off=44
+  const ch=buf.numberOfChannels
+  for(let i=0;i<n;i++){let val=0;for(let c=0;c<ch;c++)val+=buf.getChannelData(c)[s0+i]/ch;val=Math.max(-1,Math.min(1,val));v.setInt16(off,val<0?val*32768:val*32767,true);off+=2}
+  return new Blob([ab],{type:'audio/wav'})
+}
+
+// ── makeMarkerWav: OscillatorNode для sine/square/sawtooth/triangle
+// AudioWorklet для white noise и chirp (OscillatorNode их не поддерживает)
+async function makeMarkerWav(sr) {
+  const durMs  = +document.getElementById('markerDur').value
+  const amp    = +document.getElementById('markerAmp').value / 100
+  const freq   = +document.getElementById('markerFreq').value
+  const wave   = document.getElementById('markerWave').value
+  const durSec = durMs / 1000
+  const N      = Math.floor(sr * durSec)
+  const FADE   = Math.floor(sr * 0.005)  // 5мс fade
+
+  let samples
+
+  if (wave === 'sine' || wave === 'square') {
+    // ── OscillatorNode → OfflineAudioContext ──────────────────────────────
+    const ctx  = new OfflineAudioContext(1, N, sr)
+    const osc  = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    osc.type = wave  // 'sine' | 'square'
+    osc.frequency.value = freq
+
+    // Fade envelope via gain automation
+    gain.gain.setValueAtTime(0, 0)
+    gain.gain.linearRampToValueAtTime(amp, FADE / sr)
+    gain.gain.setValueAtTime(amp, durSec - FADE / sr)
+    gain.gain.linearRampToValueAtTime(0, durSec)
+
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(0); osc.stop(durSec)
+
+    const rendered = await ctx.startRendering()
+    samples = rendered.getChannelData(0)
+
+  } else if (wave === 'white') {
+    // ── White noise — Float32Array вручную (OscillatorNode не поддерживает) ─
+    samples = new Float32Array(N)
+    for (let i = 0; i < N; i++) {
+      const env = i < FADE ? i/FADE : i > N-FADE ? (N-i)/FADE : 1.0
+      samples[i] = (Math.random() * 2 - 1) * amp * env
+    }
+
+  } else if (wave === 'chirp') {
+    // ── Chirp (freq→2*freq) — OscillatorNode.frequency automation ────────
+    const ctx  = new OfflineAudioContext(1, N, sr)
+    const osc  = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(freq, 0)
+    osc.frequency.linearRampToValueAtTime(freq * 2, durSec)  // sweep up
+
+    gain.gain.setValueAtTime(0, 0)
+    gain.gain.linearRampToValueAtTime(amp, FADE / sr)
+    gain.gain.setValueAtTime(amp, durSec - FADE / sr)
+    gain.gain.linearRampToValueAtTime(0, durSec)
+
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.start(0); osc.stop(durSec)
+
+    const rendered = await ctx.startRendering()
+    samples = rendered.getChannelData(0)
+  }
+
+  // ── Float32Array → WAV blob ───────────────────────────────────────────────
+  return float32ToWav(samples, sr)
+}
+
+// ── Универсальный Float32→WAV конвертер (используется и в assembleWithMarkers) ─
+function float32ToWav(samples, sr) {
+  const N  = samples.length
+  const ab = new ArrayBuffer(44 + N * 2)
+  const v  = new DataView(ab); let off = 0
+  const ws = s => { for (let i = 0; i < s.length; i++) v.setUint8(off++, s.charCodeAt(i)) }
+  ws('RIFF'); v.setUint32(4, 36+N*2, true); off=8
+  ws('WAVE'); ws('fmt '); v.setUint32(16,16,true); off+=4
+  v.setUint16(20,1,true); v.setUint16(22,1,true)
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);  v.setUint16(34,16,true)
+  off=36; ws('data'); v.setUint32(40,N*2,true); off=44
+  for (let i = 0; i < N; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]))
+    v.setInt16(off, s < 0 ? s*32768 : s*32767, true); off+=2
+  }
+  return new Blob([ab], {type:'audio/wav'})
+}
+
+async function assembleWithMarkers(){
+  const sr=audioBuf.sampleRate
+  const parts=[]
+  for(let i=0;i<segments.length;i++){
+    const s=segments[i]
+    const blob=await sliceToWav(audioBuf,s.start,s.end).arrayBuffer()
+    parts.push(blob)
+    if(i<segments.length-1) parts.push(await makeMarkerWav(sr).arrayBuffer())
+  }
+  // Concat all PCM data after headers — rebuild single WAV
+  // Each part is already a complete WAV, we need to extract PCM data
+  let totalSamples=0
+  const pcmParts=[]
+  for(const part of parts){
+    const v=new DataView(part)
+    const pcmSize=v.getUint32(40,true)
+    const samples=pcmSize/2
+    totalSamples+=samples
+    pcmParts.push({buf:part,offset:44,size:pcmSize})
+  }
+  const out=new ArrayBuffer(44+totalSamples*2)
+  const v=new DataView(out);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+totalSamples*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,totalSamples*2,true);off=44
+  for(const p of pcmParts){
+    const src=new Uint8Array(p.buf,p.offset,p.size)
+    new Uint8Array(out,off).set(src);off+=p.size
+  }
+  return new Blob([out],{type:'audio/wav'})
+}
+
+function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(blob)})}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+function getPromptMode(){return document.querySelector('input[name="pmode"]:checked')?.value||'timestamps'}
+
+function buildPrompt(n){
+  const mode=getPromptMode()
+  if(mode==='marker'){
+    const freq=document.getElementById('markerFreq').value
+    const dur=document.getElementById('markerDur').value
+    const wave=document.getElementById('markerWave').value
+    return (
+      `This Uzbek audio contains ${n} speech segments separated by ${n-1} loud ${freq}Hz ${wave} markers (${dur}ms each).\n\n` +
+      `The structure is:\n` +
+      `[Speech 1] → [MARKER ${freq}Hz] → [Speech 2] → [MARKER] → ... → [Speech ${n}]\n\n` +
+      `Each loud ${freq}Hz tone marks a boundary between segments.\n\n` +
+      `Transcribe ONLY the speech parts (ignore the markers).\n` +
+      `Return a raw JSON array of EXACTLY ${n} strings, one per speech segment.\n` +
+      `Script: Latin Uzbek only (not Cyrillic). No timestamps, no explanation.\n\n` +
+      `Example: ${JSON.stringify(Array(Math.min(n,3)).fill('...'))}${n>3?',...':''}`
+    )
+  } else if(mode==='timestamps'){
+    const list=segments.map((s,i)=>`  ${i+1}. ${s.start.toFixed(2)}s – ${s.end.toFixed(2)}s`).join('\n')
+    return (
+      `Transcribe this Uzbek audio containing ${n} speech segment(s) at these time ranges:\n${list}\n\n` +
+      `Rules:\n- Script: Latin Uzbek only (not Cyrillic).\n- "" for silent/music segments.\n\n` +
+      `Output: raw JSON array of EXACTLY ${n} strings.\n\n` +
+      `Example: ${JSON.stringify(Array(Math.min(n,3)).fill('...'))}${n>3?',...':''}`
+    )
+  } else {
+    return (
+      `You have received ${n} separate Uzbek audio files.\n` +
+      segments.map((s,i)=>`  Audio ${i+1}: ${s.start.toFixed(1)}s – ${s.end.toFixed(1)}s`).join('\n') + '\n\n' +
+      `Transcribe each SEPARATELY. Return raw JSON array of EXACTLY ${n} strings.\n` +
+      `Example: ${JSON.stringify(Array(n).fill('...'))}`
+    )
+  }
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+let logLines=[], lastParsed=[], lastSegsCopy=[]
+let mfccEnabled = false
+let mfccRegions = []   // [{start, end, mfcc1_avg, isMusic}] over full file
+let mfccSegs = []      // detected music segments
+function push(msg,type='info'){
+  logLines.push({msg,type})
+  const box=document.getElementById('logBox');box.style.display='block'
+  document.getElementById('logSection').style.display='block'
+  const line=document.createElement('div');line.className='log-line'
+  line.style.color=LOG_C[type]||LOG_C.info
+  line.style.fontSize=type==='dim'?'10px':'11px'
+  line.textContent=msg;box.appendChild(line);box.scrollTop=box.scrollHeight
+}
+function downloadSrt(){
+  if(!lastParsed.length){alert('Нет результатов — запусти тест');return}
+  const fmt=t=>{
+    const h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=Math.floor(t%60),ms=Math.round((t%1)*1000)
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+','+String(ms).padStart(3,'0')
+  }
+  let srt='', idx=1
+  lastSegsCopy.slice(0,lastParsed.length).forEach((seg,i)=>{
+    const text=(lastParsed[i]||'').trim()
+    if(!text)return
+    srt+=idx+'\n'+fmt(seg.start)+' --> '+fmt(seg.end)+'\n'+text+'\n\n'
+    idx++
+  })
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([srt],{type:'text/plain;charset=utf-8'}))
+  a.download='exp_'+currentMode+'_'+currentModel+'_'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.srt'
+  a.click()
+}
+function clearLog(){logLines=[];document.getElementById('logBox').innerHTML='';document.getElementById('verdict').style.display='none'}
+function downloadLog(){
+  if(!logLines.length)return
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([logLines.map(l=>l.msg).join('\n')],{type:'text/plain'}))
+  a.download=`exp_${currentMode}_${getPromptMode()}_${currentModel}_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.txt`
+  a.click()
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+async function runTest(){
+  const apiKey=document.getElementById('apiKey').value.trim()
+  if(!apiKey||!audioBuf||running)return
+  running=true
+  document.getElementById('runBtn').disabled=true
+  document.getElementById('runBtn').textContent='⏳ ОТПРАВЛЕНО...'
+  clearLog()
+  const t0=performance.now()
+  const pmode=getPromptMode()
+
+  try{
+    push(`━━ ТЕСТ: ${currentMode} · ${pmode} ━━`,'head')
+    push(`Модель: ${currentModel}`)
+
+    let audioParts=[], n=segments.length, promptStr
+
+    if(pmode==='marker'){
+      // Один склеенный WAV с маркерами
+      push(`Режим: МАРКЕР — сборка одного WAV из ${n} сегментов + ${n-1} маркеров...`)
+      const assembled=await assembleWithMarkers()
+      const totalKB=(assembled.size/1024).toFixed(0)
+      push(`✓ Собран WAV: ${totalKB}KB · ${(assembled.size/audioBuf.sampleRate/2).toFixed(2)}s (примерно)`,'ok')
+      const b64=await blobToB64(assembled)
+      audioParts=[{inline_data:{mime_type:'audio/wav',data:b64}}]
+      promptStr=buildPrompt(n)
+      push(`Структура: ${segments.map((_,i)=>`[Сег${i+1}]${i<n-1?'[МАРКЕР]':''}`).join('')}`)
+    } else {
+      // Отдельные WAV (multi-audio)
+      push(`Режим: MULTI-AUDIO — нарезка ${n} отдельных WAV...`)
+      const blobs=[]
+      for(let i=0;i<n;i++){
+        const s=segments[i], blob=await sliceToWav(audioBuf,s.start,s.end)
+        push(`  [${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}s · ${(blob.size/1024).toFixed(0)}KB`)
+        blobs.push(blob)
+      }
+      push(`✓ Нарезка готова`,'ok')
+      const b64arr=await Promise.all(blobs.map(blobToB64))
+      audioParts=b64arr.map(b64=>({inline_data:{mime_type:'audio/wav',data:b64}}))
+      promptStr=buildPrompt(n)
+    }
+
+    push(``); push(`─── ПРОМТ ────────────────────────────────`,'dim')
+    push(promptStr,'dim'); push(`──────────────────────────────────────────`,'dim'); push(``)
+
+    push(`Отправляю → ${currentModel}...`)
+    const apiT0=performance.now()
+    const resp=await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({contents:[{parts:[...audioParts,{text:promptStr}]}],generationConfig:{temperature:0,maxOutputTokens:4096}})}
+    )
+    const apiMs=Math.round(performance.now()-apiT0)
+    push(`HTTP ${resp.status} · ${apiMs}ms`,resp.ok?'ok':'err')
+
+    const raw=await resp.json()
+    push(``); push(`─── RAW ──────────────────────────────────`,'dim')
+    push(JSON.stringify(raw,null,2),'dim'); push(`──────────────────────────────────────────`,'dim'); push(``)
+
+    if(!resp.ok){push(`✗ ${raw?.error?.message}`,'err');showVerdict(false,null,null,raw?.error?.message);return}
+
+    const text=(raw.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+    push(`─── ОТВЕТ ────────────────────────────────`,'dim'); push(text,'dim'); push(`──────────────────────────────────────────`,'dim'); push(``)
+
+    const u=raw.usageMetadata
+    if(u){
+      const audio=u.promptTokensDetails?.find(d=>d.modality==='AUDIO')?.tokenCount||'?'
+      const txt=u.promptTokensDetails?.find(d=>d.modality==='TEXT')?.tokenCount||'?'
+      push(`Токены: prompt=${u.promptTokenCount} (audio=${audio} text=${txt}) → output=${u.candidatesTokenCount}`,'dim'); push(``)
+    }
+
+    let parsed=null
+    try{
+      let s=text;if(s.includes('```')){s=s.split('```')[1];if(s.startsWith('json'))s=s.slice(4)}
+      parsed=JSON.parse(s.trim())
+    }catch(_){const m=text.match(/\[[\s\S]*\]/);if(m)try{parsed=JSON.parse(m[0])}catch(_){}}
+
+    if(parsed&&Array.isArray(parsed)){
+      lastParsed=[...parsed]; lastSegsCopy=[...segments]
+      const match=parsed.length===n
+      push(`✓ Распарсено: ${parsed.length}/${n} ${match?'✓':'⚠'}`,match?'ok':'warn')
+      parsed.forEach((t,i)=>push(`  [${i+1}] "${t}"`,t?'result':'dim'))
+      push(`Итого: ${Math.round(performance.now()-t0)}ms`,'dim')
+      showVerdict(true,parsed,n,null,Math.round(performance.now()-t0))
+    } else {
+      push(`✗ JSON parse failed`,'err'); showVerdict(false,null,null,'JSON parse failed')
+    }
+  }catch(e){push(`✗ ${e.message}`,'err');showVerdict(false,null,null,e.message)}
+  finally{running=false;document.getElementById('runBtn').disabled=false;document.getElementById('runBtn').textContent='▶ ЗАПУСТИТЬ СНОВА'}
+}
+
+function showVerdict(ok,texts,exp,err,ms){
+  const el=document.getElementById('verdict'); el.style.display='block'
+  const match=ok&&texts&&texts.length===exp
+  el.className='verdict '+(match?'ok':ok?'warn':'err')
+  const tc=match?'#4ade80':ok?'#fbbf24':'#f87171'
+  const title=match?`✅ РАБОТАЕТ — ${texts.length}/${exp}`:ok?`⚠️ ЧАСТИЧНО — ${texts?.length}/${exp}`:`❌ ОШИБКА — ${err}`
+  let html=`<div class="verdict-title" style="color:${tc}">${title}</div>`
+  if(texts) texts.forEach((t,i)=>html+=`<div class="verdict-row"><span class="verdict-idx">[${i+1}]</span><span class="verdict-text">${t||'<em style="color:#374151">(пусто)</em>'}</span></div>`)
+  if(ms) html+=`<div class="muted">${ms}ms · ${currentModel} · ${currentMode}/${getPromptMode()}</div>`
+  el.innerHTML=html
+  const s=document.getElementById('st_'+currentModel.replace(/\./g,'_'))
+  if(s){s.textContent=match?'✓':ok?'⚠':'✗';s.style.color=match?'#4ade80':ok?'#fbbf24':'#f87171'}
+}
+
+// Init
+previewMarker()
+</script>
+</body>
+</html>
