@@ -1,0 +1,1772 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>UzTranscribe · experiment7 · Contract Pipeline</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #070c14; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; padding: 20px; font-size: 12px; }
+.wrap { max-width: 920px; margin: 0 auto; }
+
+/* ── Header ─────────────────────────────────────────── */
+.header { border-bottom: 1px solid #111827; padding-bottom: 12px; margin-bottom: 18px; }
+.header-sub { font-size: 10px; color: #a78bfa; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+.header-title { font-size: 17px; font-weight: 700; color: #f1f5f9; }
+.header-desc  { color: #4b5563; font-size: 11px; margin-top: 3px; }
+
+/* ── Stage node ─────────────────────────────────────── */
+.stage-node { border: 1px solid var(--sc,#1e293b); border-radius: 10px; background: var(--sb,#0a0f1a); margin-bottom: 6px; overflow: hidden; }
+.stage-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--sh,#0d1520); border-bottom: 1px solid var(--sc,#1e293b); }
+.stage-num  { font-size: 9px; letter-spacing: 2px; color: var(--sa,#4b5563); text-transform: uppercase; flex-shrink:0; }
+.stage-name { font-size: 12px; font-weight: 700; color: var(--sa,#94a3b8); flex: 1; }
+.stage-badge{ font-size:9px; padding:2px 8px; border-radius:10px; background:var(--sba,#1e293b); color:var(--sa,#4b5563); transition: all .3s; }
+.stage-body { padding: 14px; }
+
+/* Stage colors */
+.s-input  { --sc:#0284c7; --sb:#06101e; --sh:#071422; --sa:#38bdf8; --sba:#0a2040; }
+.s-zero   { --sc:#0891b2; --sb:#050d10; --sh:#071620; --sa:#22d3ee; --sba:#0a1e28; }
+.s-one    { --sc:#7c3aed; --sb:#08050d; --sh:#100818; --sa:#a78bfa; --sba:#1a0a2e; }
+.s-two    { --sc:#f59e0b; --sb:#0d0a00; --sh:#191000; --sa:#fcd34d; --sba:#2a1800; }
+.s-three  { --sc:#3b82f6; --sb:#060e1a; --sh:#071422; --sa:#93c5fd; --sba:#0a1e3a; }
+.s-result { --sc:#22d3ee; --sb:#050c10; --sh:#071620; --sa:#67e8f9; --sba:#0a1e28; }
+
+/* Contract badge states */
+.badge-ok  { background:#052e16 !important; color:#3fb950 !important; border: 1px solid #166534; }
+.badge-err { background:#1c0a0a !important; color:#f85149 !important; border: 1px solid #7f1d1d; }
+.badge-run { background:#1a1200 !important; color:#f0883e !important; border: 1px solid #92400e; }
+.badge-warn{ background:#2a1200 !important; color:#fbbf24 !important; border: 1px solid #ca8a04; }
+
+/* Stage status dot */
+.sdot { width:8px; height:8px; border-radius:50%; background:#374151; flex-shrink:0; }
+.sdot.ok  { background:#3fb950; box-shadow: 0 0 4px #3fb95044; }
+.sdot.err { background:#f85149; }
+.sdot.run { background:#f0883e; animation: sdot-pulse 1s ease-in-out infinite; }
+@keyframes sdot-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── Common controls ─────────────────────────────────── */
+.lbl { color: #4b5563; font-size: 10px; letter-spacing: 2px; margin-bottom: 5px; }
+.section-lbl { font-size: 9px; color: #4b5563; letter-spacing: 2px; text-transform: uppercase; margin: 10px 0 5px; }
+input[type=password], select {
+  width:100%; background:#0d1520; border:1px solid #111827; border-radius:6px;
+  padding:7px 10px; color:#e2e8f0; font-family:inherit; font-size:12px; outline:none;
+}
+input[type=password]:focus { border-color:#38bdf8; }
+.input-row { display:grid; grid-template-columns:1fr 240px; gap:12px; margin-bottom:10px; }
+.lang-inline { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.lang-inline .lbl { margin-bottom:0; white-space:nowrap; }
+.lang-inline select { flex:1; }
+
+/* Models */
+.models { display:flex; flex-direction:column; gap:3px; }
+.model-btn { padding:5px 10px; border-radius:5px; border:1px solid #111827; background:#0d1520; color:#4b5563; font-family:inherit; font-size:11px; cursor:pointer; transition:all .15s; text-align:left; display:flex; justify-content:space-between; align-items:center; }
+.model-btn.active { background:#0a1e30; border-color:#0284c7; color:#38bdf8; }
+.model-btn:hover:not(.active) { border-color:#1e293b; color:#64748b; }
+.model-btn .m-price { font-size:10px; color:#1f2937; }
+.model-btn .m-status { font-size:10px; margin-left:4px; }
+
+/* Dropzone */
+.dropzone { border:1px dashed #111827; border-radius:8px; padding:16px; text-align:center; cursor:pointer; transition:all .2s; user-select:none; margin-top:10px; }
+.dropzone.empty  { color:#1f2937; }
+.dropzone.loaded { border-color:#0284c7; background:#06101e; color:#38bdf8; }
+#waveCanvas { width:100%; height:56px; display:none; border-radius:4px; background:#040810; margin-top:8px; }
+
+/* Mode tabs */
+.mode-tabs { display:flex; gap:5px; flex-wrap:wrap; margin-top:6px; }
+.mode-tab { padding:5px 13px; border-radius:6px; border:1px solid #111827; background:#0d1520; color:#4b5563; cursor:pointer; font-family:inherit; font-size:11px; font-weight:500; transition:all .15s; }
+.mode-tab.active { border-color:#7c3aed; color:#c4b5fd; background:#1a0a2e; }
+
+/* Panels */
+.panel { background:#0a0f1a; border:1px solid #111827; border-radius:8px; padding:11px 13px; margin-top:10px; }
+.panel-title { color:#4b5563; font-size:10px; letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
+.ctrl-row { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
+.ctrl { display:flex; flex-direction:column; gap:3px; }
+.ctrl label { color:#4b5563; font-size:10px; letter-spacing:1px; }
+.ctrl input[type=range] { width:110px; accent-color:#7c3aed; }
+.ctrl-val { color:#c4b5fd; font-size:11px; font-weight:600; }
+.panel-info { color:#374151; font-size:10px; margin-top:8px; line-height:1.7; }
+
+/* Buttons */
+.btn { padding:5px 14px; border-radius:6px; border:none; background:#1d4ed8; color:#fff; cursor:pointer; font-family:inherit; font-size:11px; font-weight:600; transition:all .15s; }
+.btn:hover { filter:brightness(1.15); }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+.btn.purple { background:#7c3aed; }
+.btn.teal   { background:#0891b2; }
+.btn.green  { background:#166534; color:#4ade80; }
+.btn.amber  { background:#92400e; color:#fef08a; }
+.btn.amber.active { background:#ca8a04; color:#fff; border:2px solid #fbbf24; }
+
+/* Segment list */
+.seg-header { display:flex; align-items:center; justify-content:space-between; margin-top:10px; margin-bottom:5px; }
+.seg-row { display:flex; align-items:center; gap:5px; background:#0d1520; border-radius:6px; padding:6px 9px; border:1px solid #111827; margin-bottom:3px; user-select:none; }
+.seg-row.is-music { background:#1a1200; border-color:#ca8a04; }
+.seg-row.is-capped { background:#0a1e0a; border-color:#166534; }
+.seg-idx  { color:#7c3aed; min-width:22px; font-size:11px; flex-shrink:0; }
+.seg-dur  { color:#374151; font-size:10px; min-width:40px; }
+.seg-id   { color:#1f2937; font-size:9px; min-width:50px; }
+.seg-src  { font-size:9px; padding:1px 5px; border-radius:3px; flex-shrink:0; }
+.src-rms  { background:#1a0a2e; color:#a78bfa; }
+.src-vad  { background:#052e16; color:#4ade80; }
+.src-cap  { background:#0a1e0a; color:#3fb950; }
+.src-music{ background:#422006; color:#fbbf24; }
+
+/* Marker preview */
+#markerCanvas { width:100%; height:34px; display:block; border-radius:4px; background:#040810; border:1px solid #111827; }
+
+/* Assembly preview */
+.asm-prev { padding:9px 13px; background:#0a0f1a; border:1px solid #92400e; border-radius:8px; margin-top:10px; font-size:10px; color:#92400e; }
+.asm-seg  { display:inline-block; padding:2px 5px; border-radius:3px; margin:2px; font-size:10px; }
+.asm-seg.speech { background:#0a2540; color:#60a5fa; }
+.asm-seg.mark   { background:#422006; color:#fbbf24; }
+
+/* Merge mode buttons */
+.merge-btn { padding:5px 14px; border-radius:6px; border:1px solid #3d2a00; background:#1a1200; color:#6b5100; cursor:pointer; font-family:inherit; font-size:11px; font-weight:600; transition:all .15s; }
+.merge-btn:hover { border-color:#92400e; color:#a16207; }
+.merge-btn.active { background:#1a1000; border-color:#f59e0b; color:#fcd34d; }
+
+/* Batch viz */
+.batch-row { display:flex; align-items:center; gap:5px; margin-bottom:4px; flex-wrap:wrap; }
+.batch-seg { height:18px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:600; color:#fff; flex-shrink:0; min-width:18px; padding:0 3px; }
+.batch-mark { width:7px; height:18px; border-radius:2px; background:#ca8a04; opacity:.7; flex-shrink:0; }
+.batch-api  { background:#0a2540; border:1px solid #1d4ed8; border-radius:4px; padding:2px 7px; color:#60a5fa; font-size:10px; flex-shrink:0; margin-left:4px; }
+
+/* Dispatch params grid */
+.dp-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 20px; }
+.dp-row  { display:flex; align-items:center; gap:8px; }
+.dp-row label { color:#4b5563; font-size:10px; min-width:100px; }
+.dp-row input[type=range] { flex:1; accent-color:#f59e0b; }
+.dp-val  { color:#fcd34d; font-size:11px; min-width:45px; }
+
+/* Run controls */
+.run-label-row { margin-top:6px; font-size:10px; color:#374151; display:flex; align-items:center; gap:6px; }
+.btn-run { width:100%; padding:11px; border-radius:8px; border:none; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; letter-spacing:2px; transition:all .2s; margin-top:10px; }
+.btn-run:enabled  { background:#f59e0b; color:#1a1000; }
+.btn-run:enabled:hover { background:#fbbf24; }
+.btn-run:disabled { background:#111827; color:#374151; cursor:default; }
+
+/* Report table */
+.report-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; margin-top:8px; }
+.report-cell { background:#040810; border:1px solid #111827; border-radius:6px; padding:8px 10px; }
+.rc-label { font-size:9px; color:#4b5563; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:4px; }
+.rc-val   { font-size:16px; font-weight:700; color:#e2e8f0; }
+.rc-sub   { font-size:9px; color:#4b5563; margin-top:2px; }
+.rc-ok    { border-color:#166534; }
+.rc-warn  { border-color:#92400e; }
+.rc-err   { border-color:#7f1d1d; }
+
+/* Verdict */
+.verdict { padding:11px 13px; border-radius:8px; border:1px solid; margin-top:10px; display:none; }
+.verdict.ok   { background:#052e16; border-color:#166534; }
+.verdict.warn { background:#422006; border-color:#92400e; }
+.verdict.err  { background:#1c0a0a; border-color:#7f1d1d; }
+.verdict-title { font-weight:700; font-size:13px; margin-bottom:5px; }
+.verdict-row   { display:flex; gap:6px; margin-bottom:3px; }
+.verdict-idx   { color:#7c3aed; min-width:20px; font-size:11px; flex-shrink:0; }
+.verdict-text  { color:#cbd5e1; font-size:12px; }
+
+/* Log */
+.log-toolbar { display:flex; align-items:center; justify-content:space-between; margin-top:10px; margin-bottom:5px; }
+.log-title   { color:#67e8f9; font-size:10px; letter-spacing:2px; text-transform:uppercase; }
+.log-actions { display:flex; gap:5px; }
+.btn-log { background:#0d1520; border:1px solid #111827; border-radius:5px; padding:4px 10px; color:#4b5563; cursor:pointer; font-family:inherit; font-size:10px; letter-spacing:1px; transition:all .15s; }
+.btn-log:hover { border-color:#1e293b; color:#64748b; }
+.btn-log.green { color:#4ade80; border-color:#166534; }
+.log-box { background:#040810; border:1px solid #0d1520; border-radius:8px; padding:10px 12px; max-height:420px; overflow-y:auto; display:none; }
+.log-line { margin-bottom:1px; white-space:pre-wrap; word-break:break-all; line-height:1.6; }
+
+/* Detectors */
+.mfcc-panel    { background:#0d0a00; border:1px solid #92400e; border-radius:8px; padding:11px 13px; margin-top:10px; display:none; }
+.mfcc-panel.show { display:block; }
+.mfcc-panel .panel-title { color:#fbbf24; }
+.detector-panel { background:#0a0f1a; border:1px solid #1e3a2f; border-radius:8px; padding:11px 13px; margin-top:10px; display:none; }
+.detector-panel.show { display:block; }
+.detector-panel .panel-title { color:#4ade80; }
+.mfcc-badge   { font-size:9px; background:#422006; color:#fbbf24; border-radius:3px; padding:1px 4px; flex-shrink:0; }
+.silero-badge { font-size:9px; background:#14532d; color:#4ade80;  border-radius:3px; padding:1px 4px; flex-shrink:0; }
+.bpm-badge    { font-size:9px; background:#0c2a2a; color:#14b8a6;  border-radius:3px; padding:1px 4px; flex-shrink:0; }
+
+/* FFT */
+#spectroCanvas { width:100%; height:100px; display:block; border-radius:4px; background:#040810; }
+#peaksCanvas   { width:100%; height:52px;  display:block; border-radius:4px; background:#040810; margin-top:4px; }
+.fft-colorbar  { height:7px; border-radius:4px; margin:4px 0 7px; background:linear-gradient(to right,#040810,#0a1628,#1d4ed8,#7c3aed,#f59e0b,#ef4444,#fff); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ── Header ───────────────────────────────────────────────────── -->
+<div class="header">
+  <div class="header-sub">UzTranscribe · Experiment Lab v7</div>
+  <div class="header-title">⚙ Contract Pipeline: MaskMap → SegmentList → Batches → Dispatch → SRT</div>
+  <div class="header-desc">Каждая фаза — функция с валидацией входа и выхода. MaskMap исключает музыку. hardCap гарантирует maxDur. Retry + fallback на каждый пакет.</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- INPUT                                                          -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="stage-node s-input">
+  <div class="stage-head">
+    <div class="sdot" id="dot-input"></div>
+    <div class="stage-num">INPUT</div>
+    <div class="stage-name">API · Модель · Аудиофайл</div>
+    <div class="stage-badge" id="badge-input">нет файла</div>
+  </div>
+  <div class="stage-body">
+    <div class="input-row">
+      <div>
+        <div class="lbl">GEMINI API KEY</div>
+        <input type="password" id="apiKey" placeholder="AIzaSy...">
+        <div class="lang-inline">
+          <div class="lbl">ЯЗЫК</div>
+          <select id="langSelect">
+            <option value="uz">🇺🇿 Uzbek</option>
+            <option value="ru">🇷🇺 Russian</option>
+            <option value="kk">🇰🇿 Kazakh</option>
+            <option value="ky">🇰🇬 Kyrgyz</option>
+            <option value="en">🇺🇸 English</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <div class="lbl">МОДЕЛЬ</div>
+        <div class="models" id="modelBtns"></div>
+      </div>
+    </div>
+    <div class="dropzone empty" id="dropzone" onclick="document.getElementById('fileInput').click()"
+      ondragover="event.preventDefault()" ondrop="event.preventDefault();if(event.dataTransfer.files[0])loadFile(event.dataTransfer.files[0])">
+      ⊕ Загрузить аудио (drag & drop или клик)
+    </div>
+    <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="if(this.files[0])loadFile(this.files[0])">
+    <canvas id="waveCanvas"></canvas>
+  </div>
+</div>
+
+<!-- Стрелка 0 -->
+<div style="text-align:center;color:#1e293b;font-size:10px;padding:2px 0;position:relative">
+  <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#1e293b;transform:translateX(-50%)"></div>
+  <span style="background:#070c14;padding:0 8px;z-index:1;position:relative">↓ ФАЗА 0</span>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- STAGE 0 — ANALYSIS                                             -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="stage-node s-zero">
+  <div class="stage-head">
+    <div class="sdot" id="dot-s0"></div>
+    <div class="stage-num">ФАЗА 0</div>
+    <div class="stage-name">Анализ → MaskMap</div>
+    <div class="stage-badge" id="badge-s0">ожидание</div>
+  </div>
+  <div class="stage-body">
+    <div style="font-size:10px;color:#374151;margin-bottom:8px;line-height:1.7">
+      Запускает Silero VAD на весь файл → строит <strong style="color:#22d3ee">MaskMap</strong> (каждые 10мс: речь / музыка / тишина).
+      Результат передаётся в Фазу 1 как маска — музыкальные регионы автоматически пропускаются при сегментации.
+    </div>
+
+    <!-- Silero toggle -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <button class="btn teal" id="btnRunAnalysis" onclick="runAnalysis()" disabled>🔬 Запустить анализ (VAD + BPM)</button>
+      <span style="color:#374151;font-size:10px" id="analysisStatus">← загрузи аудио сначала</span>
+    </div>
+
+    <!-- Silero BPM params -->
+    <div id="analysisPanel" style="display:none">
+      <div class="panel" style="border-color:#0e7490">
+        <div class="panel-title" style="color:#22d3ee">Параметры детектора</div>
+        <div class="ctrl-row">
+          <div class="ctrl">
+            <label>VAD ЭНЕРГИЯ</label>
+            <input type="range" min="1" max="30" step="1" value="8" id="sVadEnergy"
+              oninput="document.getElementById('sVadEnergyV').textContent=this.value+'%'">
+            <span class="ctrl-val" id="sVadEnergyV">8%</span>
+          </div>
+          <div class="ctrl">
+            <label>BPM ДИАПАЗОН</label>
+            <select id="sBpmRange" style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px;">
+              <option value="60-180">60–180 (широкий)</option>
+              <option value="80-160" selected>80–160 (поп/клип)</option>
+            </select>
+          </div>
+          <div class="ctrl">
+            <label>BPM R² ПОРОГ</label>
+            <input type="range" min="0.1" max="0.9" step="0.05" value="0.35" id="sBpmThresh"
+              oninput="document.getElementById('sBpmThreshV').textContent=this.value">
+            <span class="ctrl-val" id="sBpmThreshV">0.35</span>
+          </div>
+          <div class="ctrl">
+            <label>ОКНО (МС)</label>
+            <input type="range" min="500" max="5000" step="500" value="2000" id="sWindowMs"
+              oninput="document.getElementById('sWindowMsV').textContent=this.value+'мс'">
+            <span class="ctrl-val" id="sWindowMsV">2000мс</span>
+          </div>
+          <input type="hidden" id="sLufsThresh" value="-6">
+        </div>
+        <div id="sileroScoreBars" style="margin-top:8px;display:none">
+          <canvas id="sileroScoreCanvas" style="width:100%;height:48px;display:block;border-radius:4px;background:#040810;border:1px solid #111827;"></canvas>
+        </div>
+        <div style="margin-top:6px;font-size:10px;color:#4ade80;font-weight:600" id="sileroResult">← нажми "Запустить анализ"</div>
+      </div>
+    </div>
+
+    <!-- MaskMap contract output -->
+    <div id="maskMapOutput" style="display:none;margin-top:8px">
+      <div style="font-size:10px;color:#374151;display:flex;gap:16px;flex-wrap:wrap">
+        <span>MaskMap: <strong id="mmCoverage" style="color:#22d3ee">—</strong></span>
+        <span>Музыки: <strong id="mmMusicSec" style="color:#f0883e">—</strong></span>
+        <span>Речи: <strong id="mmSpeechSec" style="color:#4ade80">—</strong></span>
+        <span>Тишины: <strong id="mmSilenceSec" style="color:#4b5563">—</strong></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Стрелка 1 -->
+<div style="text-align:center;color:#1e293b;font-size:10px;padding:2px 0;position:relative">
+  <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#1e293b;transform:translateX(-50%)"></div>
+  <span style="background:#070c14;padding:0 8px;z-index:1;position:relative">↓ ФАЗА 1</span>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- STAGE 1 — SEGMENTATION                                         -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="stage-node s-one">
+  <div class="stage-head">
+    <div class="sdot" id="dot-s1"></div>
+    <div class="stage-num">ФАЗА 1</div>
+    <div class="stage-name">Сегментация → SegmentList</div>
+    <div class="stage-badge" id="badge-s1">ожидание</div>
+  </div>
+  <div class="stage-body">
+    <div class="section-lbl">МЕТОД</div>
+    <div class="mode-tabs" id="segModeTabs">
+      <button class="mode-tab active" onclick="setSegMethod('v12rms')" id="tab-v12rms">⚡ v12 RMS</button>
+      <button class="mode-tab" onclick="setSegMethod('twopass')" id="tab-twopass">🎯 RMS→VAD</button>
+      <button class="mode-tab" onclick="setSegMethod('manual')" id="tab-manual">✋ Ручная</button>
+    </div>
+
+    <!-- v12 RMS panel -->
+    <div id="rmsPanel">
+      <div class="panel">
+        <div class="panel-title">⚡ v12 RMS</div>
+        <div class="ctrl-row">
+          <div class="ctrl"><label>МИН. ПАУЗА</label>
+            <input type="range" min="50" max="800" step="50" value="300" id="rmsMinPause"
+              oninput="document.getElementById('rmsMinPauseV').textContent=this.value+'мс'">
+            <span class="ctrl-val" id="rmsMinPauseV">300мс</span></div>
+          <div class="ctrl"><label>ПОРОГ %</label>
+            <input type="range" min="1" max="30" step="1" value="8" id="rmsThresh"
+              oninput="document.getElementById('rmsThreshV').textContent=this.value+'%'">
+            <span class="ctrl-val" id="rmsThreshV">8%</span></div>
+          <div class="ctrl"><label>МИН. ДУР (с)</label>
+            <input type="range" min="0.3" max="2.0" step="0.1" value="0.5" id="rmsMinDur"
+              oninput="document.getElementById('rmsMinDurV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="rmsMinDurV">0.5с</span></div>
+          <div class="ctrl"><label>HARD CAP (с) ⬇</label>
+            <input type="range" min="2" max="15" step="0.5" value="4" id="rmsHardCap"
+              oninput="document.getElementById('rmsHardCapV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="rmsHardCapV" style="color:#4ade80">4с</span></div>
+          <div class="ctrl"><label>БУФ ±мс</label>
+            <input type="range" min="0" max="200" step="10" value="60" id="rmsBufMs"
+              oninput="document.getElementById('rmsBufMsV').textContent=this.value+'мс'">
+            <span class="ctrl-val" id="rmsBufMsV">60мс</span></div>
+        </div>
+        <div style="margin-top:6px;font-size:10px;color:#374151" id="rmsInfo">← нажми сегментировать</div>
+      </div>
+    </div>
+
+    <!-- twopass panel -->
+    <div id="twopassPanel" style="display:none">
+      <div class="panel" style="border-color:#0e7490">
+        <div class="panel-title" style="color:#22d3ee">🎯 RMS→VAD 2-pass</div>
+        <div class="ctrl-row">
+          <div class="ctrl"><label>МИН. ПАУЗА</label>
+            <input type="range" min="100" max="800" step="50" value="300" id="tp_minPause"
+              oninput="document.getElementById('tp_minPauseV').textContent=this.value+'мс'">
+            <span class="ctrl-val" id="tp_minPauseV">300мс</span></div>
+          <div class="ctrl"><label>МИН. ДУР</label>
+            <input type="range" min="0.5" max="1.5" step="0.1" value="0.9" id="tp_minDur"
+              oninput="document.getElementById('tp_minDurV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="tp_minDurV">0.9с</span></div>
+          <div class="ctrl"><label>МАКС. ДУР</label>
+            <input type="range" min="1.5" max="5.0" step="0.1" value="2.5" id="tp_maxDur"
+              oninput="document.getElementById('tp_maxDurV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="tp_maxDurV">2.5с</span></div>
+          <div class="ctrl"><label>HARD CAP (с) ⬇</label>
+            <input type="range" min="2" max="10" step="0.5" value="4" id="tp_hardCap"
+              oninput="document.getElementById('tp_hardCapV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="tp_hardCapV" style="color:#4ade80">4с</span></div>
+          <div class="ctrl"><label>БУФЕР ±мс</label>
+            <input type="range" min="0" max="300" step="25" value="100" id="tp_bufMs"
+              oninput="document.getElementById('tp_bufMsV').textContent=this.value+'мс'">
+            <span class="ctrl-val" id="tp_bufMsV">100мс</span></div>
+        </div>
+        <div style="margin-top:7px;font-size:10px;color:#22d3ee;font-weight:600" id="tpResult">← нажми сегментировать</div>
+        <div style="margin-top:3px;font-size:10px;color:#374151" id="tpStats"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+      <button class="btn purple" id="btnSegment" onclick="runSegmentation()" disabled>⚡ Сегментировать</button>
+      <span style="color:#374151;font-size:10px" id="segHint">← сначала загрузи аудио</span>
+    </div>
+
+    <!-- Contract output -->
+    <div id="segContractOutput" style="display:none;margin-top:10px">
+      <div style="font-size:10px;color:#374151;display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px">
+        <span>Сегментов: <strong id="scN" style="color:#a78bfa">—</strong></span>
+        <span>avg: <strong id="scAvg" style="color:#a78bfa">—</strong></span>
+        <span>max: <strong id="scMax" style="color:#a78bfa">—</strong></span>
+        <span>Filtered(музыка): <strong id="scFiltered" style="color:#f0883e">—</strong></span>
+        <span>HardCap splits: <strong id="scCapped" style="color:#4ade80">—</strong></span>
+      </div>
+      <div style="font-size:9px;color:#374151;margin-bottom:4px">
+        ✓ Контракт: minDur ≤ dur ≤ hardCap для всех сегментов
+      </div>
+    </div>
+
+    <!-- Segment list -->
+    <div id="segEditor" style="display:none">
+      <div class="seg-header">
+        <div class="lbl" style="margin-bottom:0">СЕГМЕНТЫ <span id="segCount" style="color:#374151"></span></div>
+        <div style="color:#1f2937;font-size:9px">id · start–end · dur · src</div>
+      </div>
+      <div id="segList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Стрелка 2 -->
+<div style="text-align:center;color:#1e293b;font-size:10px;padding:2px 0;position:relative">
+  <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#1e293b;transform:translateX(-50%)"></div>
+  <span style="background:#070c14;padding:0 8px;z-index:1;position:relative">↓ ФАЗА 2</span>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- STAGE 2 — DISPATCH CONFIG                                      -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="stage-node s-two">
+  <div class="stage-head">
+    <div class="sdot" id="dot-s2"></div>
+    <div class="stage-num">ФАЗА 2</div>
+    <div class="stage-name">Диспатч → TextMap</div>
+    <div class="stage-badge" id="badge-s2">ожидание</div>
+  </div>
+  <div class="stage-body">
+    <!-- Dispatch mode -->
+    <div class="section-lbl">РЕЖИМ ДИСПАТЧА</div>
+    <div class="mode-tabs">
+      <button class="mode-tab active" onclick="setDispMode('marker')"      id="dtab-marker">🔔 Marker WAV</button>
+      <button class="mode-tab"        onclick="setDispMode('timestamps')"  id="dtab-timestamps">⏱ Timestamps</button>
+      <button class="mode-tab"        onclick="setDispMode('plain')"       id="dtab-plain">📋 Plain multi</button>
+    </div>
+
+    <!-- Marker settings -->
+    <div id="markerPanel">
+      <div class="panel" style="border-color:#92400e;margin-top:10px">
+        <div class="panel-title" style="color:#fbbf24">🔔 Маркер</div>
+        <div class="ctrl-row">
+          <div class="ctrl"><label>ЧАСТОТА (Гц)</label>
+            <input type="range" min="200" max="4000" step="100" value="1000" id="markerFreq"
+              oninput="document.getElementById('markerFreqV').textContent=this.value+'Гц';previewMarker()">
+            <span class="ctrl-val" id="markerFreqV">1000Гц</span></div>
+          <div class="ctrl"><label>ДЛИНА (МС)</label>
+            <input type="range" min="100" max="1000" step="50" value="300" id="markerDur"
+              oninput="document.getElementById('markerDurV').textContent=this.value+'мс';previewMarker()">
+            <span class="ctrl-val" id="markerDurV">300мс</span></div>
+          <div class="ctrl"><label>АМПЛИТУДА</label>
+            <input type="range" min="10" max="100" step="5" value="80" id="markerAmp"
+              oninput="document.getElementById('markerAmpV').textContent=this.value+'%';previewMarker()">
+            <span class="ctrl-val" id="markerAmpV">80%</span></div>
+          <div class="ctrl"><label>ВОЛНА</label>
+            <select id="markerWave" onchange="previewMarker()" style="background:#111827;border:none;border-radius:4px;padding:4px 8px;color:#e2e8f0;font-family:inherit;font-size:11px">
+              <option value="sine">Синус</option>
+              <option value="square">Прямоугольник</option>
+              <option value="white">Белый шум</option>
+            </select></div>
+          <div class="ctrl"><label>MAX BATCH (с)</label>
+            <input type="range" min="20" max="120" step="10" value="60" id="maxBatchSec"
+              oninput="document.getElementById('maxBatchSecV').textContent=this.value+'с'">
+            <span class="ctrl-val" id="maxBatchSecV">60с</span></div>
+        </div>
+        <div style="margin-top:8px"><div class="lbl">ПРЕВЬЮ</div>
+          <canvas id="markerCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dispatch params -->
+    <div class="panel" style="margin-top:10px;border-color:#3d2a00">
+      <div class="panel-title" style="color:#fcd34d">ПАРАМЕТРЫ + АССЕМБЛЕР</div>
+      <div class="dp-grid">
+        <div class="dp-row"><label>Пакет (multi)</label>
+          <input type="range" min="1" max="48" step="1" value="10" id="dispBatch"
+            oninput="document.getElementById('dispBatchV').textContent=this.value+' сег'">
+          <span class="dp-val" id="dispBatchV">10 сег</span></div>
+        <div class="dp-row"><label>Параллельность</label>
+          <input type="range" min="1" max="8" step="1" value="4" id="dispConc"
+            oninput="document.getElementById('dispConcV').textContent=this.value">
+          <span class="dp-val" id="dispConcV">4</span></div>
+        <div class="dp-row"><label>Макс. символов</label>
+          <input type="range" min="20" max="80" step="5" value="35" id="dispMaxChars"
+            oninput="document.getElementById('dispMaxCharsV').textContent=this.value">
+          <span class="dp-val" id="dispMaxCharsV">35</span></div>
+        <div class="dp-row"><label>Допуск ±</label>
+          <input type="range" min="0" max="15" step="1" value="6" id="dispSplitTol"
+            oninput="document.getElementById('dispSplitTolV').textContent=this.value+' сим'">
+          <span class="dp-val" id="dispSplitTolV">6 сим</span></div>
+        <div class="dp-row"><label>Merge gap</label>
+          <input type="range" min="0" max="2000" step="100" value="500" id="dispMergeGap"
+            oninput="document.getElementById('dispMergeGapV').textContent=this.value+'мс'">
+          <span class="dp-val" id="dispMergeGapV">500мс</span></div>
+        <div class="dp-row"><label>Retry (per batch)</label>
+          <input type="range" min="1" max="5" step="1" value="3" id="dispRetry"
+            oninput="document.getElementById('dispRetryV').textContent=this.value">
+          <span class="dp-val" id="dispRetryV">3</span></div>
+      </div>
+      <!-- Assembly mode -->
+      <div style="margin-top:10px">
+        <div class="lbl" style="margin-bottom:6px">РЕЖИМ СБОРКИ</div>
+        <div style="display:flex;gap:6px" id="mergeModeRow">
+          <button class="merge-btn active" id="mb-vad"      onclick="setMergeMode('vad')">🎯 По VAD</button>
+          <button class="merge-btn"        id="mb-balanced" onclick="setMergeMode('balanced')">⚖ Балансный</button>
+          <button class="merge-btn"        id="mb-phrases"  onclick="setMergeMode('phrases')">📝 По фразам</button>
+        </div>
+        <div style="margin-top:5px;font-size:10px;color:#374151" id="mergeModeDesc">
+          <strong style="color:#22d3ee">По VAD</strong>: каждый сегмент = одна строка, без слияния.
+        </div>
+      </div>
+    </div>
+
+    <!-- Batch preview -->
+    <div id="batchPreview" style="display:none;margin-top:10px">
+      <div style="background:#040810;border:1px solid #111827;border-radius:8px;padding:10px 12px">
+        <div style="font-size:9px;color:#fcd34d;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">📦 ПАКЕТЫ</div>
+        <div id="batchViz"></div>
+        <div style="font-size:10px;color:#374151;margin-top:4px" id="batchStats"></div>
+      </div>
+    </div>
+
+    <!-- Run button -->
+    <button class="btn-run" id="runBtn" onclick="runPipeline()" disabled>▶ ЗАПУСТИТЬ ПАЙПЛАЙН</button>
+    <div class="run-label-row">
+      <span style="color:#4b5563;flex-shrink:0">📂 Файл:</span>
+      <span id="runLabel" style="color:#374151">— (будет после запуска)</span>
+    </div>
+  </div>
+</div>
+
+<!-- Стрелка 3 -->
+<div style="text-align:center;color:#1e293b;font-size:10px;padding:2px 0;position:relative">
+  <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:#1e293b;transform:translateX(-50%)"></div>
+  <span style="background:#070c14;padding:0 8px;z-index:1;position:relative">↓ ФАЗА 3</span>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- STAGE 3 — RESULTS                                              -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="stage-node s-result">
+  <div class="stage-head">
+    <div class="sdot" id="dot-s3"></div>
+    <div class="stage-num">РЕЗУЛЬТАТ</div>
+    <div class="stage-name">RunReport + SRT</div>
+    <div class="stage-badge" id="badge-s3">ожидание</div>
+  </div>
+  <div class="stage-body">
+
+    <!-- Run report grid -->
+    <div class="report-grid" id="reportGrid">
+      <div class="report-cell"><div class="rc-label">Пакетов</div><div class="rc-val" id="rBatches">—</div><div class="rc-sub">dispatch</div></div>
+      <div class="report-cell"><div class="rc-label">Retry</div><div class="rc-val" id="rRetries">—</div><div class="rc-sub">повторов</div></div>
+      <div class="report-cell"><div class="rc-label">Токены</div><div class="rc-val" id="rTokens">—</div><div class="rc-sub">total prompt+out</div></div>
+      <div class="report-cell"><div class="rc-label">Latency</div><div class="rc-val" id="rLatency">—</div><div class="rc-sub">wall time</div></div>
+      <div class="report-cell"><div class="rc-label">Строк SRT</div><div class="rc-val" id="rSrtLines">—</div><div class="rc-sub">assembled</div></div>
+      <div class="report-cell"><div class="rc-label">Потеряно</div><div class="rc-val" id="rLost">—</div><div class="rc-sub">текстов</div></div>
+      <div class="report-cell"><div class="rc-label">Покрытие</div><div class="rc-val" id="rCoverage">—</div><div class="rc-sub">% от аудио</div></div>
+      <div class="report-cell"><div class="rc-label">Модель</div><div class="rc-val" id="rModel" style="font-size:11px">—</div><div class="rc-sub">финальная</div></div>
+    </div>
+
+    <!-- Verdict -->
+    <div class="verdict" id="verdict"></div>
+
+    <!-- Log -->
+    <div id="logSection" style="display:none">
+      <div class="log-toolbar">
+        <div class="log-title">ЛОГ</div>
+        <div class="log-actions">
+          <button class="btn-log" onclick="clearLog()">✕ ОЧИСТИТЬ</button>
+          <button class="btn-log" onclick="downloadLog()">⬇ ЛОГ (.txt)</button>
+          <button class="btn-log green" onclick="downloadSrt()">⬇ SRT (.srt)</button>
+          <button class="btn-log" onclick="downloadReport()" style="color:#67e8f9;border-color:#0891b2">⬇ REPORT (.json)</button>
+        </div>
+      </div>
+      <div style="font-size:10px;color:#374151;margin-bottom:5px">
+        Все файлы: <span id="runLabelLog" style="color:#4b5563">—</span>
+      </div>
+      <div class="log-box" id="logBox"></div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+// ════════════════════════════════════════════════════════════
+// GLOBALS
+// ════════════════════════════════════════════════════════════
+const GEMINI_MODELS = [
+  { id: 'gemini-2.5-flash-lite',         label: '2.5 Flash Lite', audioIn: 0.50, out: 0.40 },
+  { id: 'gemini-3.1-flash-lite-preview', label: '3.1 Flash Lite', audioIn: 0.60, out: 1.50 },
+  { id: 'gemini-2.5-flash',              label: '2.5 Flash',      audioIn: 1.00, out: 2.50 },
+  { id: 'gemini-3-flash-preview',        label: '3 Flash',        audioIn: 1.00, out: 3.00 },
+]
+const LOG_C = { info:'#7a8fa6', ok:'#4ade80', err:'#f87171', warn:'#fbbf24', head:'#a78bfa', dim:'#374151', result:'#e2e8f0' }
+
+let currentModel  = GEMINI_MODELS[0].id
+let audioBuf      = null
+let duration      = 0
+let waveformPeaks = null
+
+// Stage 0 outputs
+let maskMap         = null   // Uint8Array: 0=unknown, 1=speech, 2=music
+let vadProbsGlobal  = null   // [{t, p}]
+let sileroSegs      = []     // music regions
+let sileroSpeechSegs= []
+
+// Stage 1 outputs
+let segList         = []     // [{id, start, end, dur, src}]
+let segMethod       = 'v12rms'
+
+// Stage 2+
+let dispMode        = 'marker'
+let mergeMode       = 'vad'
+let lastRunLabel    = 'exp7'
+let lastSrtPairs    = []     // [{start,end,text}] for SRT download
+let lastReportObj   = null
+
+// RunReport
+let runReport = {
+  timestamp: null, file: null, duration: null,
+  stage0: { musicRegions: 0, musicSec: 0, speechSec: 0, maskComputed: false },
+  stage1: { method: null, totalSegs: 0, filtered: 0, capped: 0, avgDur: 0, maxDur: 0 },
+  stage2: { batches: 0, totalWavSec: 0, mode: null },
+  stage3: { requests: 0, retries: 0, fallbacks: 0, model: null, tokens: 0, latencyMs: 0 },
+  stage4: { assembled: 0, lost: 0, splitCount: 0, coveragePct: 0 },
+}
+
+// Segment ID counter
+let _segId = 0
+
+// ════════════════════════════════════════════════════════════
+// MODEL BUTTONS
+// ════════════════════════════════════════════════════════════
+;(function initModels(){
+  const bw = document.getElementById('modelBtns')
+  GEMINI_MODELS.forEach(m => {
+    const b = document.createElement('button')
+    b.className = 'model-btn' + (m.id === currentModel ? ' active' : '')
+    b.id = 'mbtn_' + m.id.replace(/[.-]/g,'_')
+    b.innerHTML = `<span style="font-size:11px">${m.label}</span><span class="m-price">$${m.audioIn}</span><span class="m-status" id="mst_${m.id.replace(/[.-]/g,'_')}"></span>`
+    b.onclick = () => { currentModel = m.id; document.querySelectorAll('.model-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active') }
+    bw.appendChild(b)
+  })
+})()
+
+// ════════════════════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id)
+let logLines = []
+
+function push(msg, type='info') {
+  logLines.push({msg, type})
+  const box = $('logBox'); box.style.display = 'block'
+  $('logSection').style.display = 'block'
+  const line = document.createElement('div'); line.className = 'log-line'
+  line.style.color = LOG_C[type] || LOG_C.info
+  line.style.fontSize = type === 'dim' ? '10px' : '11px'
+  line.textContent = msg; box.appendChild(line); box.scrollTop = box.scrollHeight
+}
+
+function clearLog() {
+  logLines = []; $('logBox').innerHTML = ''; $('logBox').style.display = 'none'
+  $('verdict').style.display = 'none'
+}
+
+function fmt(ms) { return ms >= 1000 ? (ms/1000).toFixed(1)+'с' : ms+'мс' }
+
+function setDot(id, state) {
+  const d = $(id); if (!d) return
+  d.className = 'sdot' + (state ? ' '+state : '')
+}
+function setBadge(id, text, cls) {
+  const b = $(id); if (!b) return
+  b.textContent = text
+  b.className = 'stage-badge' + (cls ? ' '+cls : '')
+}
+
+// ════════════════════════════════════════════════════════════
+// SEG METHOD TABS
+// ════════════════════════════════════════════════════════════
+function setSegMethod(m) {
+  segMethod = m
+  ;['v12rms','twopass','manual'].forEach(x => {
+    $('tab-'+x).classList.toggle('active', x===m)
+  })
+  $('rmsPanel').style.display    = m==='v12rms'  ? 'block' : 'none'
+  $('twopassPanel').style.display= m==='twopass' ? 'block' : 'none'
+}
+
+// ════════════════════════════════════════════════════════════
+// DISPATCH MODE TABS
+// ════════════════════════════════════════════════════════════
+function setDispMode(m) {
+  dispMode = m
+  ;['marker','timestamps','plain'].forEach(x => {
+    $('dtab-'+x).classList.toggle('active', x===m)
+  })
+  $('markerPanel').style.display = m==='marker' ? 'block' : 'none'
+  previewMarker()
+  updateBatchPreview()
+}
+
+// ════════════════════════════════════════════════════════════
+// MERGE MODE
+// ════════════════════════════════════════════════════════════
+const MERGE_DESC = {
+  vad:      '<strong style="color:#22d3ee">По VAD</strong>: каждый сегмент = одна строка, без слияния.',
+  balanced: '<strong style="color:#a78bfa">Балансный</strong>: склеивает короткие до maxChars.',
+  phrases:  '<strong style="color:#4ade80">По фразам</strong>: объединяет до знака препинания.',
+}
+function setMergeMode(m) {
+  mergeMode = m
+  document.querySelectorAll('.merge-btn').forEach(b=>b.classList.remove('active'))
+  $('mb-'+m).classList.add('active')
+  $('mergeModeDesc').innerHTML = MERGE_DESC[m] || ''
+}
+
+// ════════════════════════════════════════════════════════════
+// FILE LOAD + WAVEFORM
+// ════════════════════════════════════════════════════════════
+const dropzone = $('dropzone')
+dropzone.addEventListener('dragover',  e=>{e.preventDefault();dropzone.classList.add('over')})
+dropzone.addEventListener('dragleave', ()=>dropzone.classList.remove('over'))
+dropzone.addEventListener('drop',      e=>{e.preventDefault();dropzone.classList.remove('over');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])})
+$('fileInput').addEventListener('change', ()=>{if($('fileInput').files[0])loadFile($('fileInput').files[0])})
+
+async function loadFile(f) {
+  dropzone.className='dropzone'; dropzone.textContent='⏳ Декодирую...'
+  try {
+    const ab = await f.arrayBuffer()
+    const ctx = new OfflineAudioContext(1,1,44100)
+    audioBuf = await ctx.decodeAudioData(ab)
+    duration = audioBuf.duration
+    dropzone.className='dropzone loaded'
+    dropzone.textContent=`✓ ${f.name} · ${duration.toFixed(1)}с · ${audioBuf.sampleRate}Hz`
+    $('waveCanvas').style.display='block'
+    buildWaveformPeaks(); drawWaveform()
+    // Reset state
+    maskMap=null; vadProbsGlobal=null; segList=[]; _segId=0
+    $('btnRunAnalysis').disabled=false
+    $('btnSegment').disabled=false
+    $('runBtn').disabled=false
+    $('segHint').textContent='← нажми "Сегментировать"'
+    $('analysisPanel').style.display='block'
+    setDot('dot-input','ok')
+    setBadge('badge-input', `${duration.toFixed(1)}с · ${audioBuf.sampleRate}Hz`, 'badge-ok')
+    runReport.file = f.name; runReport.duration = duration
+  } catch(e) {
+    dropzone.className='dropzone empty'; dropzone.textContent=`✗ ${e.message}`
+  }
+}
+
+function buildWaveformPeaks() {
+  const data = audioBuf.getChannelData(0)
+  const W = 1200, step = Math.ceil(data.length/W)
+  waveformPeaks = new Float32Array(W)
+  for (let x=0; x<W; x++) {
+    let sum=0,count=0
+    for (let s=x*step; s<Math.min((x+1)*step, data.length); s++) { sum+=data[s]*data[s]; count++ }
+    waveformPeaks[x] = count>0 ? Math.sqrt(sum/count) : 0
+  }
+}
+
+function drawWaveform() {
+  const cv=$('waveCanvas'), ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800, H=56; cv.width=W; cv.height=H
+  ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+  // Music regions (orange)
+  sileroSegs.forEach(s=>{
+    const x0=s.start/duration*W, x1=s.end/duration*W
+    ctx.fillStyle='rgba(249,115,22,0.25)'; ctx.fillRect(x0,0,x1-x0,H)
+    ctx.fillStyle='rgba(249,115,22,0.9)';  ctx.fillRect(x0,H-3,x1-x0,3)
+  })
+  // Segment regions
+  segList.forEach((seg,i)=>{
+    const x0=seg.start/duration*W, x1=seg.end/duration*W
+    const c = seg.src==='capped' ? 'rgba(74,222,128,0.15)' : 'rgba(124,58,237,0.12)'
+    const sc= seg.src==='capped' ? '#4ade80' : '#7c3aed'
+    ctx.fillStyle=c; ctx.fillRect(x0,0,x1-x0,H)
+    ctx.strokeStyle=sc; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x0,0); ctx.lineTo(x0,H); ctx.stroke()
+    ctx.fillStyle=sc; ctx.font='9px monospace'; ctx.fillText(i+1,x0+2,11)
+  })
+  // Waveform
+  ctx.strokeStyle='#7c3aed'; ctx.lineWidth=1; ctx.beginPath()
+  const srcW=waveformPeaks?waveformPeaks.length:W
+  for(let x=0;x<W;x++){
+    const pi=Math.floor(x/W*srcW), rms=waveformPeaks?waveformPeaks[pi]:0
+    const y=(1-rms*1.8)*H/2; x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)
+  }
+  ctx.stroke()
+}
+
+// ════════════════════════════════════════════════════════════
+// STAGE 0 — ANALYSIS → MaskMap
+// ════════════════════════════════════════════════════════════
+async function runAnalysis() {
+  if (!audioBuf) return
+  setDot('dot-s0','run'); setBadge('badge-s0','анализ...','badge-run')
+  push('═══ СТЕЙДЖ 0: АНАЛИЗ ═══════════════════════════════', 'head')
+
+  try {
+    const sr = audioBuf.sampleRate, raw = audioBuf.getChannelData(0)
+    const s16 = resampleTo16kLocal(raw, sr)
+
+    push('  Silero VAD...','dim')
+    const t0 = performance.now()
+    vadProbsGlobal = await runSileroVADLocal(s16)
+    push(`  ✓ VAD: ${vadProbsGlobal.length} фреймов | ${fmt(Math.round(performance.now()-t0))}`, 'ok')
+
+    // BPM music detection
+    const winMs   = +$('sWindowMs').value
+    const ePct    = +$('sVadEnergy').value/100
+    const [bMin,bMax] = $('sBpmRange').value.split('-').map(Number)
+    const bThresh = +$('sBpmThresh').value
+    const env = computeRmsEnv(raw, sr)
+    const sortedRms = [...env.map(e=>e.rms)].sort((a,b)=>a-b)
+    const p90 = sortedRms[Math.floor(sortedRms.length*0.90)]
+    const eThresh = p90*ePct/0.10
+    const winSec = winMs/1000, numWins = Math.ceil(duration/winSec)
+    const wins = []
+    for(let wi=0;wi<numWins;wi++){
+      const t0=wi*winSec, t1=Math.min((wi+1)*winSec,duration)
+      const vInWin = vadProbsGlobal.filter(f=>f.t>=t0&&f.t<t1)
+      const nsFrac = vInWin.length ? vInWin.filter(f=>f.p<0.5).length/vInWin.length : 0
+      const eInWin = env.filter(e=>e.t>=t0&&e.t<t1)
+      const meanRms = eInWin.length ? eInWin.reduce((a,b)=>a+b.rms,0)/eInWin.length : 0
+      const {r2:bR2} = detectBPMLocal(eInWin.map(e=>e.rms), 10, bMin, bMax)
+      wins.push({t0,t1,nsFrac,meanRms,bR2, isMusic: nsFrac>=0.6 && meanRms>eThresh && bR2>=bThresh })
+    }
+
+    // Build music segments
+    sileroSegs=[]
+    let inM=false,sStart=0
+    wins.forEach(w=>{ if(!inM&&w.isMusic){inM=true;sStart=w.t0} else if(inM&&!w.isMusic){sileroSegs.push({start:sStart,end:w.t0});inM=false} })
+    if(inM) sileroSegs.push({start:sStart,end:duration})
+
+    // Build speech segments for visualization
+    sileroSpeechSegs=[]
+    let inSp=false,spStart=0
+    vadProbsGlobal.forEach(f=>{
+      if(!inSp&&f.p>=0.5){inSp=true;spStart=f.t-0.032}
+      else if(inSp&&f.p<0.35){sileroSpeechSegs.push({start:Math.max(0,spStart),end:f.t});inSp=false}
+    })
+    if(inSp) sileroSpeechSegs.push({start:spStart,end:duration})
+
+    // Build MaskMap: 10ms frames
+    const FRAME_MS = 10
+    const nFrames = Math.ceil(duration * 1000 / FRAME_MS)
+    maskMap = new Uint8Array(nFrames)  // 0=unknown,1=speech,2=music
+    vadProbsGlobal.forEach(f=>{
+      const fi = Math.floor(f.t * 1000 / FRAME_MS)
+      if(fi>=0 && fi<nFrames) maskMap[fi] = f.p>=0.5 ? 1 : 0
+    })
+    sileroSegs.forEach(s=>{
+      const f0=Math.floor(s.start*1000/FRAME_MS), f1=Math.ceil(s.end*1000/FRAME_MS)
+      for(let fi=f0;fi<f1&&fi<nFrames;fi++) maskMap[fi]=2
+    })
+
+    // Stats
+    let speechCount=0,musicCount=0,silenceCount=0
+    for(let i=0;i<nFrames;i++){
+      if(maskMap[i]===1) speechCount++
+      else if(maskMap[i]===2) musicCount++
+      else silenceCount++
+    }
+    const speechSec   = speechCount*FRAME_MS/1000
+    const musicSec    = musicCount*FRAME_MS/1000
+    const silenceSec  = silenceCount*FRAME_MS/1000
+
+    runReport.stage0 = { musicRegions:sileroSegs.length, musicSec:+musicSec.toFixed(1), speechSec:+speechSec.toFixed(1), maskComputed:true }
+
+    $('mmCoverage').textContent = nFrames+' фреймов'
+    $('mmMusicSec').textContent  = musicSec.toFixed(1)+'с'
+    $('mmSpeechSec').textContent = speechSec.toFixed(1)+'с'
+    $('mmSilenceSec').textContent= silenceSec.toFixed(1)+'с'
+    $('maskMapOutput').style.display='block'
+    $('sileroResult').textContent = `✓ ${sileroSegs.length} муз.регион(ов) · ${musicSec.toFixed(1)}с | ${sileroSpeechSegs.length} речевых сег`
+
+    push(`  ✓ MaskMap: речь=${speechSec.toFixed(1)}с музыка=${musicSec.toFixed(1)}с тишина=${silenceSec.toFixed(1)}с`, 'ok')
+    if(sileroSegs.length) sileroSegs.forEach((s,i)=>push(`    [M${i+1}] ${s.start.toFixed(2)}–${s.end.toFixed(2)}с`, 'warn'))
+
+    drawSileroScores(wins); drawWaveform()
+    setDot('dot-s0','ok')
+    setBadge('badge-s0', `${sileroSegs.length} муз.регион(ов) · ${speechSec.toFixed(1)}с речи`, 'badge-ok')
+
+  } catch(e) {
+    push('  ✗ '+e.message,'err')
+    setDot('dot-s0','err'); setBadge('badge-s0','ошибка VAD','badge-err')
+  }
+}
+
+function drawSileroScores(wins) {
+  if(!wins||!wins.length) return
+  const cv=$('sileroScoreCanvas'),ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800,H=48; cv.width=W; cv.height=H
+  ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H)
+  const bw=W/wins.length
+  wins.forEach((w,i)=>{
+    const x=i*bw
+    const nsH=w.nsFrac*H*0.5; ctx.fillStyle='rgba(74,222,128,0.4)'; ctx.fillRect(x,H-nsH,bw-1,nsH)
+    const bH=w.bR2*H*0.5;     ctx.fillStyle=`rgba(20,184,166,${w.bR2>0.1?0.8:0.2})`; ctx.fillRect(x,H-nsH-bH,bw-1,bH)
+    if(w.isMusic){ ctx.fillStyle='rgba(249,115,22,0.9)'; ctx.fillRect(x,H-4,bw-1,4) }
+  })
+  $('sileroScoreBars').style.display='block'
+}
+
+// ════════════════════════════════════════════════════════════
+// MASK UTILS
+// ════════════════════════════════════════════════════════════
+function isMusicSeg(seg) {
+  if (!maskMap) return false
+  const FRAME_MS=10
+  const f0=Math.floor(seg.start*1000/FRAME_MS), f1=Math.ceil(seg.end*1000/FRAME_MS)
+  if(f1<=f0) return false
+  let mc=0; for(let fi=f0;fi<f1&&fi<maskMap.length;fi++) if(maskMap[fi]===2) mc++
+  return mc/(f1-f0)>0.5
+}
+
+function getVadPausePoints() {
+  if(!vadProbsGlobal) return []
+  const pts=[]
+  let inSp=false
+  for(const f of vadProbsGlobal){
+    if(inSp && f.p<0.35){ pts.push(f.t); inSp=false }
+    else if(!inSp && f.p>=0.5) inSp=true
+  }
+  return pts
+}
+
+// ════════════════════════════════════════════════════════════
+// HARD CAP — splits segments exceeding maxDur
+// ════════════════════════════════════════════════════════════
+function hardCapSegs(segs, maxDurSec) {
+  const pausePts = getVadPausePoints()
+  const out = [], capped = []
+  for (const seg of segs) {
+    if (seg.end - seg.start <= maxDurSec) { out.push(seg); continue }
+    capped.push(seg)
+    splitSeg(seg, maxDurSec, pausePts, out)
+  }
+  return { segs: out, capped }
+}
+
+function splitSeg(seg, maxDur, pausePts, out) {
+  const dur = seg.end - seg.start
+  if (dur <= maxDur) { out.push({...seg, src:'capped'}); return }
+  const mid = (seg.start+seg.end)/2
+  const inSeg = pausePts.filter(t=>t>seg.start+0.05&&t<seg.end-0.05)
+  const splitAt = inSeg.length
+    ? inSeg.reduce((b,t)=>Math.abs(t-mid)<Math.abs(b-mid)?t:b)
+    : mid
+  splitSeg({...seg, end:splitAt},   maxDur, pausePts, out)
+  splitSeg({...seg, start:splitAt}, maxDur, pausePts, out)
+}
+
+// ════════════════════════════════════════════════════════════
+// STAGE 1 — SEGMENTATION
+// ════════════════════════════════════════════════════════════
+async function runSegmentation() {
+  if(!audioBuf) return
+  setDot('dot-s1','run'); setBadge('badge-s1','сегментирую...','badge-run')
+  push('═══ СТЕЙДЖ 1: СЕГМЕНТАЦИЯ ══════════════════════════', 'head')
+
+  let raw = []
+  let filtered = 0
+
+  try {
+    if (segMethod === 'v12rms') {
+      raw = runRmsV7()
+    } else if (segMethod === 'twopass') {
+      if (!vadProbsGlobal) {
+        push('  ⚠ VAD не запущен. Запускаю автоматически...', 'warn')
+        await runAnalysis()
+      }
+      raw = runTwoPassV7()
+    } else {
+      // manual: default 3 segments
+      raw = [
+        {start:0, end:+(duration/3).toFixed(2), src:'manual'},
+        {start:+(duration/3).toFixed(2), end:+(duration*2/3).toFixed(2), src:'manual'},
+        {start:+(duration*2/3).toFixed(2), end:+duration.toFixed(2), src:'manual'},
+      ]
+    }
+
+    push(`  Raw: ${raw.length} сегментов`, 'dim')
+
+    // Filter music regions
+    if (maskMap) {
+      const before = raw.length
+      raw = raw.filter(s => !isMusicSeg(s))
+      filtered = before - raw.length
+      if (filtered) push(`  ✓ Отфильтровано музыкальных: ${filtered}`, 'warn')
+    }
+
+    // hardCap
+    const hardCapVal = segMethod==='twopass'
+      ? +$('tp_hardCap').value
+      : +$('rmsHardCap').value
+    const { segs: capped, capped: cappedList } = hardCapSegs(raw, hardCapVal)
+    const cappedCount = cappedList.length
+    if (cappedCount) push(`  ✓ hardCap (>${hardCapVal}с) разбито: ${cappedCount} → ${capped.length-raw.length+cappedCount} новых`, 'ok')
+
+    // Assign IDs and sort
+    segList = capped
+      .sort((a,b)=>a.start-b.start)
+      .map(s => ({ ...s, id: `s${_segId++}`, dur: +(s.end-s.start).toFixed(3) }))
+
+    runReport.stage1 = {
+      method: segMethod, totalSegs: segList.length,
+      filtered, capped: cappedCount,
+      avgDur: +(segList.reduce((a,s)=>a+s.dur,0)/segList.length).toFixed(2),
+      maxDur: +Math.max(...segList.map(s=>s.dur)).toFixed(2),
+    }
+
+    push(`  ✓ SegmentList: N=${segList.length} | avg=${runReport.stage1.avgDur}с | max=${runReport.stage1.maxDur}с`, 'ok')
+
+    // Update UI
+    $('scN').textContent        = segList.length
+    $('scAvg').textContent      = runReport.stage1.avgDur+'с'
+    $('scMax').textContent      = runReport.stage1.maxDur+'с'
+    $('scFiltered').textContent = filtered
+    $('scCapped').textContent   = cappedCount
+    $('segContractOutput').style.display = 'block'
+    $('segCount').textContent = `· ${segList.length} шт`
+    $('segEditor').style.display = 'block'
+    renderSegList()
+    drawWaveform()
+    updateBatchPreview()
+
+    setDot('dot-s1','ok')
+    setBadge('badge-s1', `${segList.length} сег · max ${runReport.stage1.maxDur}с`, 'badge-ok')
+    $('segHint').textContent = `✓ ${segList.length} сегментов готово`
+
+  } catch(e) {
+    push('  ✗ '+e.message,'err'); console.error(e)
+    setDot('dot-s1','err'); setBadge('badge-s1','ошибка','badge-err')
+  }
+}
+
+// ── v12 RMS (v7 variant with minDur) ────────────────────────
+function runRmsV7() {
+  const data=audioBuf.getChannelData(0), sr=audioBuf.sampleRate
+  const FRAME_MS=10, frameSize=Math.floor(sr*FRAME_MS/1000)
+  const minPauseMs=+$('rmsMinPause').value
+  const threshPct =+$('rmsThresh').value/100
+  const minDurSec  =+$('rmsMinDur').value
+  const bufMs      =+$('rmsBufMs').value
+
+  const frames=[]
+  for(let i=0;i<data.length-frameSize;i+=frameSize){
+    let s=0; for(let j=0;j<frameSize;j++) s+=data[i+j]*data[i+j]; frames.push(Math.sqrt(s/frameSize))
+  }
+  const sorted=[...frames].sort((a,b)=>a-b)
+  const p10=sorted[Math.floor(sorted.length*.10)], p90=sorted[Math.floor(sorted.length*.90)]
+  const threshold=p10+(p90-p10)*threshPct
+  const minPF=Math.ceil(minPauseMs/FRAME_MS), minSF=Math.ceil(minDurSec*1000/FRAME_MS)
+  const bufF=Math.floor(bufMs/FRAME_MS)
+
+  const micro=[]; let inS=false,ss=0,pc=0
+  for(let fi=0;fi<frames.length;fi++){
+    if(!inS&&frames[fi]>threshold){ inS=true; ss=fi; pc=0 }
+    else if(inS){
+      if(frames[fi]<=threshold){ pc++; if(pc>=minPF){ const se=fi-pc; if(se-ss>=minSF) micro.push({start:+(Math.max(0,ss-bufF)*FRAME_MS/1000).toFixed(3), end:+(Math.min(frames.length-1,se+bufF)*FRAME_MS/1000).toFixed(3), src:'rms'}); inS=false; pc=0 } }
+      else pc=0
+    }
+  }
+  if(inS) micro.push({start:+(ss*FRAME_MS/1000).toFixed(3), end:+duration.toFixed(3), src:'rms'})
+  $('rmsInfo').textContent=`⚡ ${micro.length} raw сег | порог: ${(threshold*100).toFixed(2)}%`
+  return micro
+}
+
+// ── twopass RMS→VAD (v7 variant) ────────────────────────────
+function runTwoPassV7() {
+  const sr=audioBuf.sampleRate, data=audioBuf.getChannelData(0)
+  const minPause=+$('tp_minPause').value, minDur=+$('tp_minDur').value
+  const maxDur=+$('tp_maxDur').value, bufMs=+$('tp_bufMs').value
+  const FRAME_MS=10, frameSize=Math.floor(sr*FRAME_MS/1000)
+
+  const frames=[]
+  for(let i=0;i+frameSize<=data.length;i+=frameSize){
+    let sum=0; for(let j=0;j<frameSize;j++) sum+=data[i+j]*data[i+j]; frames.push(Math.sqrt(sum/frameSize))
+  }
+  const sorted=[...frames].sort((a,b)=>a-b)
+  const p10=sorted[Math.floor(sorted.length*.10)], p90=sorted[Math.floor(sorted.length*.90)]
+  const thresh=p10+(p90-p10)*.08
+
+  const minPauseF=Math.ceil(minPause/FRAME_MS), minSegF=Math.ceil(100/FRAME_MS)
+  const rmsPhrases=[]; let inSp=false,segStart=0,pauseCount=0
+  for(let fi=0;fi<frames.length;fi++){
+    if(!inSp&&frames[fi]>thresh){ inSp=true; segStart=fi; pauseCount=0 }
+    else if(inSp){
+      if(frames[fi]<=thresh){ pauseCount++; if(pauseCount>=minPauseF){ const segEnd=fi-pauseCount; if(segEnd-segStart>=minSegF) rmsPhrases.push({start:+(segStart*FRAME_MS/1000).toFixed(3),end:+(segEnd*FRAME_MS/1000).toFixed(3)}); inSp=false; pauseCount=0 } }
+      else pauseCount=0
+    }
+  }
+  if(inSp) rmsPhrases.push({start:+(segStart*FRAME_MS/1000).toFixed(3),end:+duration.toFixed(3)})
+  push(`  Pass 1 RMS: ${rmsPhrases.length} фраз`, 'dim')
+
+  // Pass 2: VAD within phrases
+  const vadRaw=[]; let inVad=false,vadStart=0
+  vadProbsGlobal.forEach(f=>{
+    if(!inVad&&f.p>=0.5){ inVad=true; vadStart=f.t-0.032 }
+    else if(inVad&&f.p<0.35){ vadRaw.push({start:Math.max(0,vadStart),end:f.t}); inVad=false }
+  })
+  if(inVad) vadRaw.push({start:vadStart,end:duration})
+  push(`  Pass 2 VAD: ${vadRaw.length} сегментов`, 'dim')
+
+  const TP_MIN=minDur, TP_MAX=maxDur, bufSec=bufMs/1000
+  const subtitles=[]
+  for(const phrase of rmsPhrases){
+    const inPhrase=vadRaw.filter(v=>v.start>=phrase.start-0.05&&v.end<=phrase.end+0.05)
+    if(!inPhrase.length){ subtitles.push({start:phrase.start,end:phrase.end,src:'rms-only'}); continue }
+    let bucket={start:inPhrase[0].start,end:inPhrase[0].end}
+    for(let i=1;i<inPhrase.length;i++){
+      const seg=inPhrase[i], mergedDur=seg.end-bucket.start, gap=seg.start-bucket.end
+      if(mergedDur<=TP_MAX&&gap<0.5){ bucket.end=seg.end }
+      else {
+        if(bucket.end-bucket.start>=TP_MIN) subtitles.push({...bucket,src:'vad'})
+        else subtitles.push({...bucket,src:'vad-short'})
+        bucket={start:seg.start,end:seg.end}
+      }
+    }
+    const lastDur=bucket.end-bucket.start
+    if(lastDur>=TP_MIN) subtitles.push({...bucket,src:'vad'})
+    else if(subtitles.length&&subtitles[subtitles.length-1].src!=='rms-only'){
+      const prev=subtitles[subtitles.length-1]
+      if(bucket.end-prev.start<=TP_MAX){ prev.end=bucket.end; prev.src='vad-merged' }
+      else subtitles.push({...bucket,src:'vad-short'})
+    } else subtitles.push({...bucket,src:'vad-short'})
+  }
+  // Apply buffer + remove overlaps
+  const buffered=subtitles.map(s=>({start:Math.max(0,+(s.start-bufSec).toFixed(3)),end:Math.min(duration,+(s.end+bufSec).toFixed(3)),src:s.src}))
+  for(let i=1;i<buffered.length;i++) if(buffered[i].start<buffered[i-1].end) buffered[i].start=buffered[i-1].end
+
+  const durs=buffered.map(s=>s.end-s.start)
+  const avg=durs.reduce((a,b)=>a+b,0)/durs.length
+  const below=durs.filter(d=>d<TP_MIN).length, above=durs.filter(d=>d>TP_MAX).length
+  $('tpResult').textContent=`✓ N=${buffered.length} | avg=${avg.toFixed(2)}с | ↓<${TP_MIN}с:${below} | ↑>${TP_MAX}с:${above}`
+  const srcCounts={}; buffered.forEach(s=>srcCounts[s.src]=(srcCounts[s.src]||0)+1)
+  $('tpStats').textContent=Object.entries(srcCounts).map(([k,v])=>`${k}:${v}`).join(' | ')
+  return buffered
+}
+
+// ── Render segment list ──────────────────────────────────────
+function renderSegList() {
+  const list=$('segList'); list.innerHTML=''
+  $('segCount').textContent=`· ${segList.length} шт`
+  segList.forEach((seg,i)=>{
+    const row=document.createElement('div')
+    row.className='seg-row'+(seg.src==='capped'?' is-capped':'')
+    const srcClass = seg.src==='rms'?'src-rms':seg.src==='vad'||seg.src==='vad-merged'?'src-vad':seg.src==='capped'?'src-cap':'src-rms'
+    row.innerHTML=`<span class="seg-idx">[${i+1}]</span><span class="seg-id">${seg.id}</span><span class="seg-dur">${seg.start.toFixed(2)}–${seg.end.toFixed(2)}с</span><span class="seg-dur">${seg.dur.toFixed(2)}с</span><span class="seg-src ${srcClass}">${seg.src}</span>`
+    list.appendChild(row)
+  })
+}
+
+// ════════════════════════════════════════════════════════════
+// BATCH PREVIEW
+// ════════════════════════════════════════════════════════════
+function getMarkerDurSec() { return +$('markerDur').value/1000 }
+
+function buildBatchList() {
+  if(!segList.length) return []
+  const mode = dispMode
+  const maxBatch = mode==='marker' ? +$('maxBatchSec').value : Infinity
+  const batchSize = +$('dispBatch').value
+  const markerSec = getMarkerDurSec()
+  const batches = []
+
+  if(mode==='marker'){
+    let cur=[], curDur=0
+    for(const seg of segList){
+      const d=seg.dur
+      if(cur.length>0&&(curDur+d+(cur.length>0?markerSec:0)>maxBatch)){
+        batches.push({segs:[...cur], mode}); cur=[]; curDur=0
+      }
+      cur.push(seg); curDur+=d+(cur.length>1?markerSec:0)
+    }
+    if(cur.length) batches.push({segs:[...cur], mode})
+  } else {
+    for(let i=0;i<segList.length;i+=batchSize){
+      batches.push({segs:segList.slice(i,i+batchSize), mode})
+    }
+  }
+  return batches
+}
+
+function updateBatchPreview() {
+  if(!segList.length){ $('batchPreview').style.display='none'; return }
+  const batches=buildBatchList()
+  const COLORS=['#1d4ed8','#7c3aed','#0891b2','#166534','#92400e','#b91c1c']
+  const markerSec=getMarkerDurSec()
+
+  let html=''
+  batches.forEach((batch,bi)=>{
+    const totalDur=batch.segs.reduce((s,seg)=>s+seg.dur,0)+(batch.mode==='marker'?(batch.segs.length-1)*markerSec:0)
+    html+=`<div class="batch-row"><span style="color:#4b5563;font-size:9px;min-width:50px">пакет ${bi+1}</span>`
+    batch.segs.forEach((seg,si)=>{
+      const w=Math.max(18,Math.round(seg.dur/totalDur*200))
+      html+=`<div class="batch-seg" style="width:${w}px;background:${COLORS[bi%COLORS.length]}" title="${seg.id} ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}с">${si+1}</div>`
+      if(si<batch.segs.length-1&&batch.mode==='marker') html+=`<div class="batch-mark" title="маркер ${$('markerDur').value}мс"></div>`
+    })
+    html+=`<div class="batch-api">→ Gemini API</div></div>`
+  })
+
+  const totalWavSec = batches.reduce((s,b)=>s+b.segs.reduce((ss,seg)=>ss+seg.dur,0),0)
+  $('batchViz').innerHTML=html
+  $('batchStats').textContent=`${batches.length} пакет(ов) | ${segList.length} сег | аудио ~${totalWavSec.toFixed(1)}с`
+  $('batchPreview').style.display='block'
+}
+
+// ════════════════════════════════════════════════════════════
+// STAGE 2-3 — DISPATCH WITH RETRY + FALLBACK
+// ════════════════════════════════════════════════════════════
+function buildPromptV7(batch, promptLevel) {
+  const n=batch.segs.length, mode=batch.mode
+  const langVal=$('langSelect')?.value||'uz'
+  const LANG_MAP={uz:'Uzbek',ru:'Russian',kk:'Kazakh',ky:'Kyrgyz',en:'English'}
+  const langName=LANG_MAP[langVal]||'Uzbek'
+  const scriptRule=langVal==='uz'
+    ?`- Write in Latin Uzbek only. Use apostrophe for o', g', sh, ch, ng.\n`
+    :`- Transcribe in ${langName}.\n`
+
+  if(mode==='marker'){
+    const freq=$('markerFreq').value, dur=$('markerDur').value, nMark=n-1
+    const base=(
+      `This ${langName} audio contains ${n} speech segments separated by exactly ${nMark} loud ${freq}Hz sine tone markers (${dur}ms each).\n`+
+      `Structure: [Speech 1] → [MARKER] → [Speech 2] → ... → [Speech ${n}]\n\n`+
+      `RULES:\n`+
+      `- The ${freq}Hz tones are separators — DO NOT transcribe them.\n`+
+      `- CRITICAL: Every marker = exactly one boundary. Return EXACTLY ONE string per segment.\n`+
+      `- Do NOT merge adjacent segments, even if they seem like one sentence.\n`+
+      `- Do NOT split a segment into multiple strings.\n`+
+      `- ${nMark} markers = ${n} strings. Verify: texts.length must equal markers_detected + 1 = ${n}.\n`+
+      scriptRule+
+      `- Empty string "" for inaudible or silent segments.\n`
+    )
+    if(promptLevel===0){
+      return base+`\nReturn JSON: {"markers_detected": <integer>, "texts": [exactly ${n} strings]}`
+    } else if(promptLevel===1){
+      return base+
+        `\nPREVIOUS ATTEMPT RETURNED WRONG COUNT. Count each marker tone carefully one by one.\n`+
+        `You MUST return exactly ${n} strings. Return JSON: {"markers_detected": <integer>, "texts": [exactly ${n} strings]}`
+    } else {
+      return base+
+        `\nFINAL ATTEMPT. Think step by step:\n`+
+        `1. How many ${freq}Hz tone markers do you hear? (Should be ${nMark})\n`+
+        `2. Each tone ends one segment and starts the next.\n`+
+        `3. Return exactly ${n} strings — one per segment, in order.\n`+
+        `Return JSON: {"markers_detected": ${nMark}, "texts": [exactly ${n} strings]}`
+    }
+  } else if(mode==='timestamps'){
+    const list=batch.segs.map((s,i)=>`  ${i+1}. ${s.start.toFixed(2)}s – ${s.end.toFixed(2)}s`).join('\n')
+    const base=(
+      `Transcribe this ${langName} audio. It has ${n} segment(s) at:\n${list}\n\n`+
+      `Rules: Transcribe each as ONE string. Do not merge or split.\n`+
+      scriptRule+`- Empty string "" for inaudible.\n`
+    )
+    if(promptLevel>=1) return base+`PREVIOUS ATTEMPT: wrong count. Return EXACTLY ${n} strings.\nRaw JSON array of ${n} strings.`
+    return base+`Return raw JSON array of exactly ${n} strings.`
+  } else {
+    const base=(
+      `You have ${n} separate ${langName} audio files.\n`+
+      batch.segs.map((s,i)=>`  Audio ${i+1}: ${s.start.toFixed(1)}s – ${s.end.toFixed(1)}s`).join('\n')+'\n\n'+
+      `Rules:\n- Transcribe each as EXACTLY ONE string.\n- Return EXACTLY ${n} strings.\n`+
+      scriptRule+`- Empty "" for inaudible.\n`
+    )
+    if(promptLevel>=1) return base+`PREVIOUS ATTEMPT FAILED. Correct count: ${n}.\nReturn raw JSON array of ${n} strings.`
+    return base+`Return raw JSON array of exactly ${n} strings.`
+  }
+}
+
+async function tryOnce(batch, apiKey, modelId, promptLevel) {
+  const n=batch.segs.length, mode=batch.mode
+  let audioParts=[], promptStr=buildPromptV7(batch, promptLevel)
+
+  if(mode==='marker'){
+    const wav=await assembleWithMarkersForSegs(batch.segs)
+    const b64=await blobToB64(wav)
+    audioParts=[{inline_data:{mime_type:'audio/wav',data:b64}}]
+  } else {
+    const blobs=await Promise.all(batch.segs.map(s=>Promise.resolve(sliceToWav(audioBuf,s.start,s.end))))
+    const b64arr=await Promise.all(blobs.map(blobToB64))
+    audioParts=b64arr.map(b64=>({inline_data:{mime_type:'audio/wav',data:b64}}))
+  }
+
+  const body={
+    contents:[{parts:[...audioParts,{text:promptStr}]}],
+    generationConfig:{temperature:0,maxOutputTokens:Math.max(2048,n*70)}
+  }
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`
+  const t0=performance.now()
+  const resp=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  const ms=Math.round(performance.now()-t0)
+
+  if(!resp.ok){ const err=await resp.text(); return {ok:false,reason:`HTTP ${resp.status}: ${err.slice(0,100)}`,ms} }
+
+  const data=await resp.json()
+  if(data.usageMetadata) runReport.stage3.tokens+=(data.usageMetadata.totalTokenCount||0)
+
+  const rawText=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+
+  let parsed=null, markersDetected=null
+  try{
+    let s=rawText
+    if(s.includes('```')){s=s.split('```')[1];if(s.startsWith('json'))s=s.slice(4)}
+    const cand=JSON.parse(s.trim())
+    if(cand&&typeof cand==='object'&&!Array.isArray(cand)&&Array.isArray(cand.texts)){
+      markersDetected=cand.markers_detected; parsed=cand.texts
+    } else if(Array.isArray(cand)) parsed=cand
+  }catch(_){const m=rawText.match(/\[[\s\S]*\]/);if(m)try{parsed=JSON.parse(m[0])}catch(_){}}
+
+  if(!parsed||!Array.isArray(parsed)) return {ok:false,reason:'JSON parse failed',ms}
+  if(parsed.length!==n) return {ok:false,reason:`${parsed.length}/${n}`,ms,texts:parsed,markersDetected}
+  return {ok:true,texts:parsed,markersDetected,ms,model:modelId}
+}
+
+async function dispatchBatch(batch, apiKey, model) {
+  const n=batch.segs.length
+  const modelIdx=GEMINI_MODELS.findIndex(m=>m.id===model)
+  const maxRetries=+$('dispRetry').value
+
+  // Model chain: selected, down, up
+  const chain=[{id:model,tries:maxRetries}]
+  if(modelIdx>0) chain.push({id:GEMINI_MODELS[modelIdx-1].id, tries:3})
+  if(modelIdx<GEMINI_MODELS.length-1) chain.push({id:GEMINI_MODELS[modelIdx+1].id, tries:3})
+
+  let totalAttempts=0, lastModel=model
+
+  for(const {id:mId, tries} of chain){
+    const isFallback=mId!==model
+    if(isFallback){ push(`    ↪ Fallback → ${mId}`,'wa'); runReport.stage3.fallbacks++ }
+
+    for(let attempt=0;attempt<tries;attempt++){
+      totalAttempts++
+      const promptLevel=Math.min(attempt,2)
+      try{
+        const result=await tryOnce(batch, apiKey, mId, promptLevel)
+        lastModel=mId
+        runReport.stage3.requests++
+        if(result.ok){
+          push(`    ✓ ${mId} attempt ${totalAttempts}: ${n}/${n} | ${fmt(result.ms)}`,'ok')
+          // Build segId→text map
+          const map=new Map()
+          batch.segs.forEach((seg,i)=>map.set(seg.id, result.texts[i]||''))
+          return {ok:true, map, model:mId, markersDetected:result.markersDetected}
+        }
+        push(`    ✗ ${mId} attempt ${totalAttempts}: ${result.reason} | ${fmt(result.ms)}`,'warn')
+        runReport.stage3.retries++
+      }catch(e){
+        push(`    ✗ ${mId} attempt ${totalAttempts}: network ${e.message}`,'err')
+        runReport.stage3.retries++
+      }
+    }
+  }
+
+  // All failed — return empty map
+  push(`    ✗ Все попытки исчерпаны для пакета ${n} сег`,'er')
+  const map=new Map(); batch.segs.forEach(s=>map.set(s.id,''))
+  return {ok:false, map, model:lastModel}
+}
+
+// ════════════════════════════════════════════════════════════
+// WAV ASSEMBLY FOR A SUBSET OF SEGS
+// ════════════════════════════════════════════════════════════
+async function assembleWithMarkersForSegs(segs) {
+  const sr=audioBuf.sampleRate
+  const parts=[]
+  for(let i=0;i<segs.length;i++){
+    const s=segs[i]
+    const blob=sliceToWav(audioBuf,s.start,s.end)
+    parts.push(await blob.arrayBuffer())
+    if(i<segs.length-1){const mBlob=await makeMarkerWav(sr);parts.push(await mBlob.arrayBuffer())}
+  }
+  let total=0
+  const pcmParts=[]
+  for(const part of parts){
+    const v=new DataView(part), pcmSize=v.getUint32(40,true)
+    total+=pcmSize/2; pcmParts.push({buf:part,offset:44,size:pcmSize})
+  }
+  const out=new ArrayBuffer(44+total*2)
+  const v=new DataView(out);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+total*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,total*2,true);off=44
+  for(const p of pcmParts){const src=new Uint8Array(p.buf,p.offset,p.size);new Uint8Array(out,off).set(src);off+=p.size}
+  return new Blob([out],{type:'audio/wav'})
+}
+
+// ════════════════════════════════════════════════════════════
+// STAGE 4 — ASSEMBLER WITH segId ZIP
+// ════════════════════════════════════════════════════════════
+function softSplitV7(pairs, maxChars, tol) {
+  const out=[]
+  for(const p of pairs){
+    if(!p.text||p.text.length<=maxChars){out.push(p);continue}
+    const dur=p.end-p.start, str=p.text, parts=[]
+    let pos=0
+    while(pos<str.length){
+      if(str.length-pos<=maxChars+tol){parts.push(str.slice(pos).trim());break}
+      let cut=pos+maxChars, bestSpace=-1
+      for(let d=0;d<=tol;d++){
+        if(cut+d<str.length&&str[cut+d]===' '){bestSpace=cut+d;break}
+        if(cut-d>pos&&str[cut-d]===' '){bestSpace=cut-d;break}
+      }
+      if(bestSpace===-1){parts.push(str.slice(pos,cut).trim());pos=cut}
+      else{parts.push(str.slice(pos,bestSpace).trim());pos=bestSpace+1}
+    }
+    const totalCh=parts.reduce((s,p)=>s+p.length,0)||1
+    let t=p.start
+    for(const part of parts){
+      const partDur=dur*part.length/totalCh
+      out.push({start:+t.toFixed(3),end:+(t+partDur).toFixed(3),text:part,id:p.id})
+      t+=partDur
+    }
+  }
+  return out
+}
+
+function applyMergeV7(pairs, mode, maxChars, tol, gapSec) {
+  if(mode==='vad') return pairs
+  const limit=maxChars+tol
+  if(mode==='balanced'){
+    const out=[]; let cur=null
+    for(const p of pairs){
+      if(!p.text){if(cur){out.push(cur);cur=null}continue}
+      if(!cur){cur={...p};continue}
+      const gap=p.start-cur.end, merged=cur.text+' '+p.text
+      if(gap<gapSec&&merged.length<=limit){cur={...cur,end:p.end,text:merged}}
+      else{out.push(cur);cur={...p}}
+    }
+    if(cur)out.push(cur); return out
+  }
+  if(mode==='phrases'){
+    const SENT_END=/[.!?…,;]$/; const out=[]; let cur=null
+    for(const p of pairs){
+      if(!p.text){if(cur){out.push(cur);cur=null}continue}
+      if(!cur){cur={...p};continue}
+      const gap=p.start-cur.end, merged=cur.text+' '+p.text
+      if(!SENT_END.test(cur.text)&&gap<gapSec&&merged.length<=limit){cur={...cur,end:p.end,text:merged}}
+      else{out.push(cur);cur={...p}}
+    }
+    if(cur)out.push(cur); return out
+  }
+  return pairs
+}
+
+function assembleV7(textMap) {
+  const maxCh   = +$('dispMaxChars').value
+  const splitTol= +$('dispSplitTol').value
+  const mGapSec = +$('dispMergeGap').value/1000
+
+  // Zip by segId — explicit report of missing
+  const missing=[]
+  const pairs=segList.map(seg=>{
+    const text=(textMap.get(seg.id)||'').trim()
+    if(!textMap.has(seg.id)) missing.push(seg.id)
+    return {start:seg.start, end:seg.end, id:seg.id, text}
+  })
+
+  if(missing.length){
+    push(`  ⚠ Без текста (segId не найден): ${missing.length} — ${missing.slice(0,5).join(', ')}${missing.length>5?'...':''}`, 'warn')
+  }
+
+  let assembled=softSplitV7(pairs, maxCh, splitTol)
+  const splitCount=assembled.length-pairs.length
+  assembled=applyMergeV7(assembled, mergeMode, maxCh, splitTol, mGapSec)
+  assembled=assembled.filter(p=>p.text)
+
+  runReport.stage4={
+    assembled: assembled.length,
+    lost: missing.length,
+    splitCount,
+    coveragePct: assembled.length
+      ? +( assembled[assembled.length-1].end / duration * 100 ).toFixed(1)
+      : 0
+  }
+  push(`  Ассемблер: ${assembled.length} строк | +${splitCount} от разбивки | потеряно: ${missing.length}`, missing.length?'warn':'ok')
+  return assembled
+}
+
+// ════════════════════════════════════════════════════════════
+// MAIN PIPELINE
+// ════════════════════════════════════════════════════════════
+async function runPipeline() {
+  const apiKey=$('apiKey').value.trim()
+  if(!apiKey||!audioBuf||!segList.length){ push('✗ Нужен: API ключ + аудио + сегментация','er'); return }
+
+  // Label
+  const ts=new Date().toISOString().slice(0,19).replace(/:/g,'-')
+  const mdl=currentModel.replace('gemini-','').replace(/-preview$/,'').replace(/\./g,'')
+  lastRunLabel=`exp7_${segMethod}_${dispMode}_${mdl}_${ts}`
+  $('runLabel').textContent=lastRunLabel
+  $('runLabelLog').textContent=lastRunLabel
+
+  // Reset report
+  runReport.timestamp=ts; runReport.stage3={requests:0,retries:0,fallbacks:0,model:currentModel,tokens:0,latencyMs:0}
+
+  $('runBtn').disabled=true; $('runBtn').textContent='⏳ ВЫПОЛНЯЮ...'
+  clearLog()
+  setDot('dot-s2','run'); setBadge('badge-s2','dispatch...','badge-run')
+  setDot('dot-s3','run'); setBadge('badge-s3','ожидание','badge-run')
+
+  push(`━━ ПАЙПЛАЙН: ${segMethod} · ${dispMode} · ${currentModel} ━━`, 'head')
+  push(`Сег: ${segList.length} | MaskMap: ${maskMap?'✓':'нет'} | hardCap применён`, 'dim')
+
+  const pipeT0=performance.now()
+
+  try {
+    // Build batches
+    const batches=buildBatchList()
+    runReport.stage2={
+      batches:batches.length, mode:dispMode,
+      totalWavSec:+segList.reduce((s,seg)=>s+seg.dur,0).toFixed(1)
+    }
+    push(`  📦 ${batches.length} пакет(ов) | ${segList.length} сег | mode=${dispMode}`, 'dim')
+
+    // Dispatch all batches
+    const textMap=new Map()  // segId → text
+    let usedModel=currentModel
+
+    for(let bi=0;bi<batches.length;bi++){
+      const batch=batches[bi]
+      push(`  ⟳ [${bi+1}/${batches.length}] ${batch.segs.length} сег...`, 'dim')
+      const result=await dispatchBatch(batch, apiKey, currentModel)
+      result.map.forEach((text,id)=>textMap.set(id,text))
+      if(result.model!==currentModel) usedModel=result.model
+      setBadge('badge-s2', `${bi+1}/${batches.length} пакетов`, 'badge-run')
+    }
+
+    runReport.stage3.latencyMs=Math.round(performance.now()-pipeT0)
+    runReport.stage3.model=usedModel
+    setBadge('badge-s2', `${batches.length} пакетов ✓`, 'badge-ok')
+    setDot('dot-s2','ok')
+    push(`  ✓ Dispatch: ${fmt(runReport.stage3.latencyMs)} | retry=${runReport.stage3.retries} | fallback=${runReport.stage3.fallbacks} | токены=${runReport.stage3.tokens}`, 'ok')
+
+    // Assemble
+    push('  Ассемблер...', 'dim')
+    const assembled=assembleV7(textMap)
+    lastSrtPairs=assembled
+
+    // Update report cells
+    $('rBatches').textContent   = batches.length
+    $('rRetries').textContent   = runReport.stage3.retries
+    $('rTokens').textContent    = runReport.stage3.tokens
+    $('rLatency').textContent   = fmt(runReport.stage3.latencyMs)
+    $('rSrtLines').textContent  = assembled.length
+    $('rLost').textContent      = runReport.stage4.lost
+    $('rCoverage').textContent  = runReport.stage4.coveragePct+'%'
+    $('rModel').textContent     = usedModel.replace('gemini-','')
+
+    // Color code cells
+    if(runReport.stage3.retries>0) $('rRetries').closest('.report-cell').classList.add('rc-warn')
+    if(runReport.stage4.lost>0)    $('rLost').closest('.report-cell').classList.add('rc-warn')
+    if(runReport.stage4.lost===0)  $('rSrtLines').closest('.report-cell').classList.add('rc-ok')
+    if(runReport.stage4.coveragePct<80) $('rCoverage').closest('.report-cell').classList.add('rc-warn')
+
+    // Build SRT string for log
+    push(`  ✓ SRT: ${assembled.length} строк | покрытие ${runReport.stage4.coveragePct}%`, 'ok')
+    assembled.slice(0,5).forEach((p,i)=>push(`    [${i+1}] ${p.start.toFixed(2)}–${p.end.toFixed(2)}с "${p.text}"`, 'result'))
+    if(assembled.length>5) push(`    ... +${assembled.length-5} строк`, 'dim')
+
+    // Verdict
+    const lostPct=segList.length?runReport.stage4.lost/segList.length*100:0
+    const v=$('verdict'); v.style.display='block'
+    const ok=runReport.stage4.lost===0&&runReport.stage3.retries===0
+    v.className='verdict '+(ok?'ok':runReport.stage4.lost>0?'err':'warn')
+    const tc=ok?'#4ade80':runReport.stage4.lost>0?'#f85149':'#fbbf24'
+    const vTitle=ok?'✅ УСПЕХ':runReport.stage4.lost>0?'⚠ ПОТЕРИ':'⚠ RETRY'
+    v.innerHTML='<div class="verdict-title" style="color:'+tc+'">'+vTitle+' — '+assembled.length+' строк SRT</div><div class="muted">'+usedModel+' · '+fmt(runReport.stage3.latencyMs)+' · retry='+runReport.stage3.retries+' · потеряно='+runReport.stage4.lost+'</div>'
+
+    setDot('dot-s3','ok')
+    setBadge('badge-s3', `${assembled.length} строк SRT | ${runReport.stage4.coveragePct}%`, ok?'badge-ok':'badge-warn')
+
+    lastReportObj=JSON.parse(JSON.stringify(runReport))
+
+  } catch(e) {
+    push('✗ '+e.message,'err'); console.error(e)
+    setDot('dot-s2','err'); setDot('dot-s3','err')
+    setBadge('badge-s2','ошибка','badge-err')
+    setBadge('badge-s3','ошибка','badge-err')
+  }
+  $('runBtn').disabled=false; $('runBtn').textContent='▶ ЗАПУСТИТЬ СНОВА'
+}
+
+// ════════════════════════════════════════════════════════════
+// DOWNLOAD FUNCTIONS
+// ════════════════════════════════════════════════════════════
+function toSrtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=Math.floor(s%60),ms=Math.round((s%1)*1000);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')},${String(ms).padStart(3,'0')}`}
+
+function downloadSrt(){
+  if(!lastSrtPairs.length){alert('Нет результатов');return}
+  let srt='',n=0
+  lastSrtPairs.forEach(p=>{if(!p.text)return;n++;srt+=`${n}\n${toSrtTime(p.start)} --> ${toSrtTime(p.end)}\n${p.text}\n\n`})
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([srt],{type:'text/plain;charset=utf-8'}))
+  a.download=lastRunLabel+'.srt'; a.click()
+}
+
+function downloadLog(){
+  if(!logLines.length)return
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([logLines.map(l=>l.msg).join('\n')],{type:'text/plain'}))
+  a.download=lastRunLabel+'.txt'; a.click()
+}
+
+function downloadReport(){
+  if(!lastReportObj){alert('Нет отчёта — запусти пайплайн');return}
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(lastReportObj,null,2)],{type:'application/json'}))
+  a.download=lastRunLabel+'_report.json'; a.click()
+}
+
+// ════════════════════════════════════════════════════════════
+// MARKER PREVIEW + WAV UTILS (from exp4, unchanged)
+// ════════════════════════════════════════════════════════════
+function previewMarker(){
+  const cv=$('markerCanvas'),ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800,H=34;cv.width=W;cv.height=H
+  const freq=+$('markerFreq').value,amp=+$('markerAmp').value/100
+  const wave=$('markerWave').value,durSec=+$('markerDur').value/1000
+  ctx.fillStyle='#040810';ctx.fillRect(0,0,W,H)
+  ctx.strokeStyle='#fbbf24';ctx.lineWidth=1;ctx.beginPath()
+  for(let x=0;x<W;x++){
+    const t=(x/W)*durSec;let v=0
+    if(wave==='sine')v=Math.sin(2*Math.PI*freq*t)*amp
+    else if(wave==='square')v=(Math.sin(2*Math.PI*freq*t)>0?1:-1)*amp*.7
+    else if(wave==='white')v=(Math.random()*2-1)*amp
+    const y=(1-v)*H/2;x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)
+  }
+  ctx.stroke()
+  updateBatchPreview()
+}
+
+function sliceToWav(buf,s0sec,s1sec){
+  const sr=buf.sampleRate,s0=Math.floor(s0sec*sr),s1=Math.min(Math.floor(s1sec*sr),buf.length),n=s1-s0
+  const ab=new ArrayBuffer(44+n*2),v=new DataView(ab);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+n*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,n*2,true);off=44
+  const ch=buf.numberOfChannels
+  for(let i=0;i<n;i++){let val=0;for(let c=0;c<ch;c++)val+=buf.getChannelData(c)[s0+i]/ch;val=Math.max(-1,Math.min(1,val));v.setInt16(off,val<0?val*32768:val*32767,true);off+=2}
+  return new Blob([ab],{type:'audio/wav'})
+}
+
+function float32ToWav(samples,sr){
+  const N=samples.length,ab=new ArrayBuffer(44+N*2),v=new DataView(ab);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+N*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,N*2,true);off=44
+  for(let i=0;i<N;i++){const s=Math.max(-1,Math.min(1,samples[i]));v.setInt16(off,s<0?s*32768:s*32767,true);off+=2}
+  return new Blob([ab],{type:'audio/wav'})
+}
+
+async function makeMarkerWav(sr){
+  const durMs=+$('markerDur').value,amp=+$('markerAmp').value/100
+  const freq=+$('markerFreq').value,wave=$('markerWave').value
+  const durSec=durMs/1000,N=Math.floor(sr*durSec),FADE=Math.floor(sr*.005)
+  let samples
+  if(wave==='sine'||wave==='square'){
+    const ctx=new OfflineAudioContext(1,N,sr),osc=ctx.createOscillator(),gain=ctx.createGain()
+    osc.type=wave;osc.frequency.value=freq
+    gain.gain.setValueAtTime(0,0);gain.gain.linearRampToValueAtTime(amp,FADE/sr)
+    gain.gain.setValueAtTime(amp,durSec-FADE/sr);gain.gain.linearRampToValueAtTime(0,durSec)
+    osc.connect(gain);gain.connect(ctx.destination);osc.start(0);osc.stop(durSec)
+    const r=await ctx.startRendering();samples=r.getChannelData(0)
+  } else {
+    samples=new Float32Array(N)
+    for(let i=0;i<N;i++){const env=i<FADE?i/FADE:i>N-FADE?(N-i)/FADE:1;samples[i]=(Math.random()*2-1)*amp*env}
+  }
+  return float32ToWav(samples,sr)
+}
+
+function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(blob)})}
+
+// ════════════════════════════════════════════════════════════
+// SILERO VAD FUNCTIONS (from exp4, unchanged)
+// ════════════════════════════════════════════════════════════
+let sileroSession=null
+
+function resampleTo16kLocal(samples,srcRate){
+  if(srcRate===16000)return samples
+  const ratio=16000/srcRate,out=new Float32Array(Math.round(samples.length*ratio))
+  for(let i=0;i<out.length;i++){const pos=i/ratio,lo=Math.floor(pos),hi=Math.min(lo+1,samples.length-1);out[i]=samples[lo]*(1-(pos-lo))+samples[hi]*(pos-lo)}
+  return out
+}
+
+async function runSileroVADLocal(s16){
+  if(!sileroSession){
+    ort.env.wasm.numThreads=1
+    const resp=await fetch('./vad/silero_vad_legacy.onnx')
+    if(!resp.ok)throw new Error('Silero ONNX: HTTP '+resp.status)
+    sileroSession=await ort.InferenceSession.create(new Uint8Array(await resp.arrayBuffer()),{executionProviders:['wasm'],graphOptimizationLevel:'all'})
+    push('  ✓ Silero ONNX загружен','ok')
+  }
+  const FRAME=512;let h=new Float32Array(128),c=new Float32Array(128);const probs=[]
+  for(let off=0;off+FRAME<=s16.length;off+=FRAME){
+    const out=await sileroSession.run({
+      input:new ort.Tensor('float32',s16.slice(off,off+FRAME),[1,FRAME]),
+      sr:new ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[]),
+      h:new ort.Tensor('float32',h,[2,1,64]),c:new ort.Tensor('float32',c,[2,1,64])
+    })
+    probs.push({t:(off+FRAME)/16000,p:out.output.data[0]});h=out.hn.data;c=out.cn.data
+  }
+  return probs
+}
+
+function computeRmsEnv(samples,sr){
+  const HOP=Math.floor(sr*.010),env=[]
+  for(let i=0;i+HOP<=samples.length;i+=HOP){
+    let s=0;for(let j=0;j<HOP;j++)s+=samples[i+j]*samples[i+j]
+    env.push({t:(i+HOP/2)/sr,rms:Math.sqrt(s/HOP)})
+  }
+  return env
+}
+
+function detectBPMLocal(vals,hopMs,bMin,bMax){
+  const N=vals.length;if(N<20)return{bpm:0,r2:0}
+  const m=vals.reduce((a,b)=>a+b,0)/N;const x=vals.map(v=>v-m)
+  const r0=x.reduce((a,b)=>a+b*b,0);if(!r0)return{bpm:0,r2:0}
+  let bestR2=0,bestLag=0
+  const lagMin=Math.floor(60000/bMax/hopMs),lagMax=Math.ceil(60000/bMin/hopMs)
+  for(let lag=lagMin;lag<=lagMax&&lag<N;lag++){
+    let rL=0;for(let i=0;i<N-lag;i++)rL+=x[i]*x[i+lag]
+    const r2=rL/r0;if(r2>bestR2){bestR2=r2;bestLag=lag}
+  }
+  return{bpm:bestLag>0?Math.round(60000/(bestLag*hopMs)):0,r2:bestR2}
+}
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+previewMarker()
+setSegMethod('v12rms')
+setDispMode('marker')
+setMergeMode('vad')
+</script>
+</body>
+</html>
