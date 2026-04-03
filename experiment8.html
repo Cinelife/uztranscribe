@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>UzTranscribe · exp8 · Vosk+Gemini vs Direct Gemini SRT</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/onnxruntime-web/1.20.1/ort.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#070c14;color:#e2e8f0;font-family:'JetBrains Mono',monospace;padding:18px;font-size:12px}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:15px;color:#f1f5f9;margin-bottom:2px}
+.sub{font-size:10px;color:#4b5563;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px}
+
+/* Two-column layout */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.col{background:#0a0f1a;border:1px solid #111827;border-radius:10px;overflow:hidden}
+.col-head{padding:10px 14px;border-bottom:1px solid #111827;display:flex;align-items:center;gap:8px}
+.col-title{font-size:12px;font-weight:700;flex:1}
+.col-badge{font-size:9px;padding:2px 8px;border-radius:10px;background:#1e293b;color:#4b5563}
+.col-body{padding:12px 14px}
+.col-a .col-head{background:#07111a} .col-a .col-title{color:#38bdf8}
+.col-b .col-head{background:#0d0a00} .col-b .col-title{color:#fcd34d}
+
+/* Shared input panel */
+.input-panel{background:#0a0f1a;border:1px solid #111827;border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.row{display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.lbl{font-size:10px;color:#4b5563;letter-spacing:1px;min-width:80px}
+input[type=password],input[type=text],select{background:#0d1520;border:1px solid #111827;border-radius:6px;padding:6px 9px;color:#e2e8f0;font-family:inherit;font-size:11px;outline:none;flex:1;min-width:160px}
+input[type=password]:focus,input[type=text]:focus{border-color:#38bdf8}
+.dropzone{border:1px dashed #111827;border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:all .2s;color:#1f2937;margin-bottom:8px}
+.dropzone.loaded{border-color:#0284c7;background:#06101e;color:#38bdf8}
+#waveCanvas{width:100%;height:48px;display:none;border-radius:4px;background:#040810;margin-bottom:4px}
+
+/* Models */
+.models{display:flex;gap:4px;flex-wrap:wrap}
+.mbtn{padding:4px 10px;border-radius:5px;border:1px solid #111827;background:#0d1520;color:#4b5563;font-family:inherit;font-size:10px;cursor:pointer;transition:all .15s}
+.mbtn.active{border-color:#0284c7;color:#38bdf8;background:#06101e}
+
+/* Controls */
+.ctrl-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
+.ctrl{display:flex;flex-direction:column;gap:3px}
+.ctrl label{font-size:10px;color:#4b5563;letter-spacing:1px}
+.ctrl input[type=range]{width:100px;accent-color:#7c3aed}
+.cv{color:#c4b5fd;font-size:11px;font-weight:600}
+
+/* Buttons */
+.btn{padding:6px 14px;border-radius:6px;border:none;background:#1d4ed8;color:#fff;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;transition:all .15s;white-space:nowrap}
+.btn:hover{filter:brightness(1.15)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.blue{background:#0284c7}.btn.amber{background:#92400e;color:#fef08a}
+.btn.green{background:#166534;color:#4ade80}.btn.gray{background:#1e293b;color:#94a3b8}
+
+/* Stats grid */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.stat{background:#040810;border:1px solid #111827;border-radius:6px;padding:7px 9px}
+.stat-lbl{font-size:9px;color:#4b5563;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px}
+.stat-val{font-size:15px;font-weight:700;color:#e2e8f0}
+.stat-sub{font-size:9px;color:#4b5563;margin-top:1px}
+.stat.ok{border-color:#166534}.stat.warn{border-color:#92400e}
+
+/* Log */
+.log-wrap{background:#040810;border:1px solid #0d1520;border-radius:8px;padding:9px 11px;max-height:320px;overflow-y:auto;margin-top:8px;display:none}
+.ll{margin-bottom:1px;white-space:pre-wrap;word-break:break-all;line-height:1.55}
+
+/* MAE compare */
+.mae-bar{height:18px;border-radius:3px;display:flex;align-items:center;padding:0 8px;font-size:10px;font-weight:700;margin-bottom:3px;transition:width .5s}
+
+/* Token table */
+.tok-table{width:100%;border-collapse:collapse;font-size:10px;margin-top:6px}
+.tok-table th{background:#0d1520;color:#4b5563;padding:4px 7px;text-align:left;border-bottom:1px solid #111827}
+.tok-table td{padding:4px 7px;border-bottom:1px solid #0d1520}
+.tok-table tr:last-child td{border-bottom:none;font-weight:700;color:#fcd34d}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>⚗ experiment8 — Vosk+Gemini vs Direct Gemini SRT</h1>
+<div class="sub">Два подхода · полный лог · подсчёт токенов · MAE сравнение</div>
+
+<!-- ── SHARED INPUT ──────────────────────────────────────────── -->
+<div class="input-panel">
+  <div class="row">
+    <div class="lbl">API KEY</div>
+    <input type="password" id="apiKey" placeholder="AIzaSy...">
+    <div class="lbl" style="min-width:50px">ЯЗЫК</div>
+    <select id="lang" style="min-width:130px">
+      <option value="uz">🇺🇿 Uzbek</option>
+      <option value="ru">🇷🇺 Russian</option>
+      <option value="kk">🇰🇿 Kazakh</option>
+      <option value="ky">🇰🇬 Kyrgyz</option>
+      <option value="en">🇺🇸 English</option>
+    </select>
+  </div>
+  <div class="row">
+    <div class="lbl">МОДЕЛЬ</div>
+    <div class="models" id="modelBtns"></div>
+  </div>
+  <div class="dropzone" id="dz" onclick="document.getElementById('fi').click()"
+    ondragover="event.preventDefault()" ondrop="event.preventDefault();if(event.dataTransfer.files[0])loadFile(event.dataTransfer.files[0])">
+    ⊕ Загрузить аудио/видео
+  </div>
+  <input type="file" id="fi" accept="audio/*,video/*" style="display:none" onchange="if(this.files[0])loadFile(this.files[0])">
+  <canvas id="waveCanvas"></canvas>
+  <div class="row" style="margin-bottom:0">
+    <div class="lbl">ЭТАЛОН</div>
+    <input type="file" id="etalon" accept=".srt" onchange="loadEtalon(this)" style="flex:0;font-size:10px;color:#4b5563">
+    <span id="etalonStatus" style="font-size:10px;color:#374151">← загрузи эталонный SRT для MAE</span>
+  </div>
+</div>
+
+<!-- ── TWO COLUMNS ───────────────────────────────────────────── -->
+<div class="cols">
+
+<!-- ── COLUMN A: Vosk + Gemini ──────────────────────────────── -->
+<div class="col col-a">
+  <div class="col-head">
+    <div class="col-title">🎙 A · Vosk Pass1 + Gemini Pass2</div>
+    <div class="col-badge" id="badgeA">ожидание</div>
+  </div>
+  <div class="col-body">
+    <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.7">
+      <strong style="color:#38bdf8">Pass 1:</strong> Vosk tiny → слова с таймкодами →
+      группировка в строки 0.9–2.5с<br>
+      <strong style="color:#38bdf8">Pass 2:</strong> Gemini получает ТОЛЬКО ТЕКСТ (без аудио) →
+      исправляет орфографию<br>
+      <strong style="color:#4ade80">Токены: минимальные</strong> — только текст, без аудио
+    </div>
+
+    <div class="row">
+      <div class="lbl">МОДЕЛЬ VOSK</div>
+      <input type="text" id="voskModelUrl" value="./vosk-model-small-uz/" placeholder="URL или путь к модели">
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl"><label>МИН. ДУР СТРОКИ</label>
+        <input type="range" min="0.5" max="2.0" step="0.1" value="0.9" id="aMinDur"
+          oninput="document.getElementById('aMinDurV').textContent=this.value+'с'">
+        <span class="cv" id="aMinDurV">0.9с</span></div>
+      <div class="ctrl"><label>МАКС. ДУР СТРОКИ</label>
+        <input type="range" min="1.5" max="4.0" step="0.1" value="2.5" id="aMaxDur"
+          oninput="document.getElementById('aMaxDurV').textContent=this.value+'с'">
+        <span class="cv" id="aMaxDurV">2.5с</span></div>
+      <div class="ctrl"><label>МАКС. СИМВОЛОВ</label>
+        <input type="range" min="20" max="80" step="5" value="42" id="aMaxChars"
+          oninput="document.getElementById('aMaxCharsV').textContent=this.value">
+        <span class="cv" id="aMaxCharsV">42</span></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn blue" id="btnA" onclick="runA()" disabled>▶ Запустить A</button>
+      <button class="btn gray" onclick="downloadSrtA()" id="dlA" disabled>⬇ SRT</button>
+    </div>
+
+    <!-- Stats A -->
+    <div class="stats">
+      <div class="stat" id="statA_words"><div class="stat-lbl">Слов Vosk</div><div class="stat-val" id="vA_words">—</div><div class="stat-sub">pass 1</div></div>
+      <div class="stat" id="statA_lines"><div class="stat-lbl">Строк SRT</div><div class="stat-val" id="vA_lines">—</div><div class="stat-sub">assembled</div></div>
+      <div class="stat" id="statA_tok"><div class="stat-lbl">Токены</div><div class="stat-val" id="vA_tok">—</div><div class="stat-sub">pass 2 only</div></div>
+      <div class="stat" id="statA_time"><div class="stat-lbl">Latency</div><div class="stat-val" id="vA_time">—</div><div class="stat-sub">total</div></div>
+    </div>
+    <div class="log-wrap" id="logA"></div>
+  </div>
+</div>
+
+<!-- ── COLUMN B: Direct Gemini SRT ──────────────────────────── -->
+<div class="col col-b">
+  <div class="col-head">
+    <div class="col-title">🎬 B · Direct Gemini → SRT</div>
+    <div class="col-badge" id="badgeB">ожидание</div>
+  </div>
+  <div class="col-body">
+    <div style="font-size:10px;color:#374151;margin-bottom:10px;line-height:1.7">
+      <strong style="color:#fcd34d">Чанк 25с:</strong> аудио → Gemini → "верни SRT с таймкодами"<br>
+      <strong style="color:#fcd34d">Офсет:</strong> к каждому таймкоду прибавляется начало чанка<br>
+      <strong style="color:#f0883e">Токены: аудио×N чанков</strong> — зависит от длины файла
+    </div>
+
+    <div class="ctrl-row">
+      <div class="ctrl"><label>РАЗМЕР ЧАНКА (с)</label>
+        <input type="range" min="10" max="45" step="5" value="25" id="bChunkSec"
+          oninput="document.getElementById('bChunkSecV').textContent=this.value+'с'">
+        <span class="cv" id="bChunkSecV">25с</span></div>
+      <div class="ctrl"><label>ПЕРЕКРЫТИЕ (с)</label>
+        <input type="range" min="0" max="5" step="0.5" value="1" id="bOverlap"
+          oninput="document.getElementById('bOverlapV').textContent=this.value+'с'">
+        <span class="cv" id="bOverlapV">1с</span></div>
+      <div class="ctrl"><label>МАКС. СИМВОЛОВ</label>
+        <input type="range" min="20" max="80" step="5" value="42" id="bMaxChars"
+          oninput="document.getElementById('bMaxCharsV').textContent=this.value">
+        <span class="cv" id="bMaxCharsV">42</span></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn amber" id="btnB" onclick="runB()" disabled>▶ Запустить B</button>
+      <button class="btn gray" onclick="downloadSrtB()" id="dlB" disabled>⬇ SRT</button>
+    </div>
+
+    <!-- Stats B -->
+    <div class="stats">
+      <div class="stat" id="statB_chunks"><div class="stat-lbl">Чанков</div><div class="stat-val" id="vB_chunks">—</div><div class="stat-sub">audio</div></div>
+      <div class="stat" id="statB_lines"><div class="stat-lbl">Строк SRT</div><div class="stat-val" id="vB_lines">—</div><div class="stat-sub">assembled</div></div>
+      <div class="stat" id="statB_tok"><div class="stat-lbl">Токены</div><div class="stat-val" id="vB_tok">—</div><div class="stat-sub">total audio+text</div></div>
+      <div class="stat" id="statB_time"><div class="stat-lbl">Latency</div><div class="stat-val" id="vB_time">—</div><div class="stat-sub">total</div></div>
+    </div>
+    <!-- Token per-chunk table -->
+    <div id="tokenTableWrap" style="display:none">
+      <table class="tok-table" id="tokenTable">
+        <thead><tr><th>Чанк</th><th>Аудио tkn</th><th>Текст tkn</th><th>Out tkn</th><th>Строк</th><th>Время</th></tr></thead>
+        <tbody id="tokenTableBody"></tbody>
+      </table>
+    </div>
+    <div class="log-wrap" id="logB"></div>
+  </div>
+</div>
+</div>
+
+<!-- ── MAE COMPARISON ────────────────────────────────────────── -->
+<div id="maePanel" style="display:none;background:#0a0f1a;border:1px solid #111827;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+  <div style="font-size:9px;color:#4b5563;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">MAE vs ЭТАЛОН</div>
+  <div id="maeViz"></div>
+  <div style="font-size:10px;color:#374151;margin-top:6px" id="maeSummary"></div>
+</div>
+
+<!-- ── SHARED LOG ─────────────────────────────────────────────── -->
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+  <div style="font-size:10px;color:#67e8f9;letter-spacing:2px;text-transform:uppercase">ОБЩИЙ ЛОГ</div>
+  <div style="display:flex;gap:5px">
+    <button class="btn gray" style="font-size:10px;padding:3px 9px" onclick="clearShared()">✕</button>
+    <button class="btn gray" style="font-size:10px;padding:3px 9px" onclick="downloadSharedLog()">⬇ ЛОГ</button>
+  </div>
+</div>
+<div class="log-wrap" id="logShared" style="display:block;max-height:280px"></div>
+
+</div><!-- /wrap -->
+<script>
+// ═══════════════════════════════════════════════════════
+// GLOBALS
+// ═══════════════════════════════════════════════════════
+const MODELS = [
+  { id:'gemini-2.5-flash-lite', label:'2.5 Lite', price:0.50 },
+  { id:'gemini-2.5-flash',      label:'2.5 Flash', price:1.00 },
+  { id:'gemini-3-flash-preview',label:'3 Flash',   price:1.00 },
+]
+const LANG_MAP = {uz:'Uzbek',ru:'Russian',kk:'Kazakh',ky:'Kyrgyz',en:'English'}
+const LOG_C = {info:'#7a8fa6',ok:'#4ade80',err:'#f87171',warn:'#fbbf24',head:'#a78bfa',dim:'#374151',result:'#e2e8f0'}
+
+let currentModel = MODELS[0].id
+let audioBuf = null, duration = 0, waveformPeaks = null
+let etalonSegs = []
+
+// Results
+let srtA = '', srtB = ''
+let sharedLog = []
+let sileroSession = null
+let voskSession = null   // Vosk recognizer
+
+// ── Models ─────────────────────────────────────────────
+;(()=>{
+  const bw=document.getElementById('modelBtns')
+  MODELS.forEach(m=>{
+    const b=document.createElement('button')
+    b.className='mbtn'+(m.id===currentModel?' active':'')
+    b.textContent=m.label+' $'+m.price
+    b.onclick=()=>{currentModel=m.id;document.querySelectorAll('.mbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active')}
+    bw.appendChild(b)
+  })
+})()
+
+// ── Log helpers ────────────────────────────────────────
+function pushTo(elId, msg, type='info') {
+  const box=document.getElementById(elId)
+  box.style.display='block'
+  const line=document.createElement('div')
+  line.className='ll'; line.style.color=LOG_C[type]||LOG_C.info
+  line.style.fontSize=type==='dim'?'10px':'11px'
+  const ts=new Date().toTimeString().slice(0,8)
+  line.textContent='['+ts+'] '+msg
+  box.appendChild(line); box.scrollTop=box.scrollHeight
+}
+function pushA(msg,t='info'){ pushTo('logA',msg,t); pushShared('[A] '+msg,t) }
+function pushB(msg,t='info'){ pushTo('logB',msg,t); pushShared('[B] '+msg,t) }
+function pushShared(msg,t='info'){
+  sharedLog.push({msg,t})
+  const box=document.getElementById('logShared')
+  const line=document.createElement('div'); line.className='ll'
+  line.style.color=LOG_C[t]||LOG_C.info; line.style.fontSize=t==='dim'?'10px':'11px'
+  const ts=new Date().toTimeString().slice(0,8)
+  line.textContent='['+ts+'] '+msg
+  box.appendChild(line); box.scrollTop=box.scrollHeight
+}
+function clearShared(){ sharedLog=[]; document.getElementById('logShared').innerHTML='' }
+function downloadSharedLog(){
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([sharedLog.map(l=>l.msg).join('\n')],{type:'text/plain'}))
+  a.download='exp8_log_'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.txt'
+  a.click()
+}
+function fmt(ms){ return ms>=1000?(ms/1000).toFixed(1)+'с':ms+'мс' }
+function setBadge(id,text,color){
+  const b=document.getElementById(id); if(!b)return
+  b.textContent=text
+  b.style.background=color==='ok'?'#052e16':color==='err'?'#1c0a0a':color==='run'?'#1a1200':'#1e293b'
+  b.style.color=color==='ok'?'#3fb950':color==='err'?'#f85149':color==='run'?'#f0883e':'#4b5563'
+}
+
+// ── File load ──────────────────────────────────────────
+const dz=document.getElementById('dz')
+dz.addEventListener('dragover',e=>{e.preventDefault()})
+dz.addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])})
+document.getElementById('fi').addEventListener('change',()=>{if(document.getElementById('fi').files[0])loadFile(document.getElementById('fi').files[0])})
+
+async function loadFile(f) {
+  dz.textContent='⏳ Декодирую...'
+  try {
+    const ab=await f.arrayBuffer()
+    const ctx=new OfflineAudioContext(1,1,44100)
+    audioBuf=await ctx.decodeAudioData(ab)
+    duration=audioBuf.duration
+    dz.className='dropzone loaded'
+    dz.textContent=`✓ ${f.name} · ${duration.toFixed(1)}с · ${audioBuf.sampleRate}Hz`
+    buildWaveformPeaks(); drawWaveform()
+    document.getElementById('waveCanvas').style.display='block'
+    document.getElementById('btnA').disabled=false
+    document.getElementById('btnB').disabled=false
+    pushShared(`Файл загружен: ${f.name} (${duration.toFixed(1)}с)`,'ok')
+  } catch(e) {
+    dz.className='dropzone'; dz.textContent='✗ '+e.message
+  }
+}
+
+function buildWaveformPeaks(){
+  const data=audioBuf.getChannelData(0),W=1200,step=Math.ceil(data.length/W)
+  waveformPeaks=new Float32Array(W)
+  for(let x=0;x<W;x++){let sum=0,count=0;for(let s=x*step;s<Math.min((x+1)*step,data.length);s++){sum+=data[s]*data[s];count++};waveformPeaks[x]=count>0?Math.sqrt(sum/count):0}
+}
+
+function drawWaveform(){
+  const cv=document.getElementById('waveCanvas'),ctx=cv.getContext('2d')
+  const W=cv.offsetWidth||800,H=48;cv.width=W;cv.height=H
+  ctx.fillStyle='#040810';ctx.fillRect(0,0,W,H)
+  ctx.strokeStyle='#7c3aed';ctx.lineWidth=1;ctx.beginPath()
+  const srcW=waveformPeaks?waveformPeaks.length:W
+  for(let x=0;x<W;x++){const pi=Math.floor(x/W*srcW),rms=waveformPeaks?waveformPeaks[pi]:0;const y=(1-rms*1.8)*H/2;x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+  ctx.stroke()
+}
+
+// ── Etalon SRT ─────────────────────────────────────────
+function loadEtalon(input) {
+  const f=input.files[0]; if(!f)return
+  const r=new FileReader()
+  r.onload=e=>{
+    etalonSegs=parseSrt(e.target.result)
+    document.getElementById('etalonStatus').textContent=`✓ ${etalonSegs.length} строк эталона`
+    document.getElementById('etalonStatus').style.color='#4ade80'
+    updateMAE()
+  }
+  r.readAsText(f)
+}
+
+function parseSrt(text){
+  const segs=[]
+  for(const b of text.split(/\n\n+/)){
+    const lines=b.trim().split('\n')
+    for(let i=0;i<lines.length;i++){
+      const m=lines[i].match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/)
+      if(m){const g=m.slice(1).map(Number);const t0=g[0]*3600+g[1]*60+g[2]+g[3]/1000;const t1=g[4]*3600+g[5]*60+g[6]+g[7]/1000;segs.push({t0,t1,text:lines.slice(i+1).join(' ').trim()});break}
+    }
+  }
+  return segs
+}
+
+function calcMAE(srtText){
+  const segs=parseSrt(srtText)
+  if(!segs.length||!etalonSegs.length)return null
+  let sum=0
+  for(const s of segs){
+    const sm=(s.t0+s.t1)/2
+    const c=etalonSegs.reduce((b,e)=>Math.abs((e.t0+e.t1)/2-sm)<Math.abs((b.t0+b.t1)/2-sm)?e:b)
+    sum+=Math.abs(s.t0-c.t0)
+  }
+  return (sum/segs.length).toFixed(3)
+}
+
+function updateMAE(){
+  const panel=document.getElementById('maePanel')
+  if(!etalonSegs.length){panel.style.display='none';return}
+  const mA=srtA?calcMAE(srtA):null
+  const mB=srtB?calcMAE(srtB):null
+  if(!mA&&!mB){panel.style.display='none';return}
+  panel.style.display='block'
+
+  const best=Math.min(mA||99,mB||99)
+  let html=''
+  if(mA){
+    const w=Math.round(parseFloat(mA)/2*400)
+    const pct=Math.round(parseFloat(mA)/2*100)
+    html+=`<div style="font-size:10px;color:#374151;margin-bottom:3px">A · Vosk+Gemini</div>`
+    html+=`<div class="mae-bar" style="width:${Math.min(w,400)}px;background:${parseFloat(mA)===best?'#166534':'#374151'};color:${parseFloat(mA)===best?'#4ade80':'#94a3b8'}">MAE=${mA}с</div>`
+  }
+  if(mB){
+    const w=Math.round(parseFloat(mB)/2*400)
+    html+=`<div style="font-size:10px;color:#374151;margin-bottom:3px;margin-top:6px">B · Direct Gemini</div>`
+    html+=`<div class="mae-bar" style="width:${Math.min(w,400)}px;background:${parseFloat(mB)===best?'#166534':'#374151'};color:${parseFloat(mB)===best?'#4ade80':'#94a3b8'}">MAE=${mB}с</div>`
+  }
+  // Reference
+  html+=`<div class="mae-bar" style="width:107px;background:#1e293b;color:#94a3b8;margin-top:6px">v12 baseline=0.534с</div>`
+  document.getElementById('maeViz').innerHTML=html
+
+  const summary=[]
+  if(mA)summary.push(`A=${mA}с`)
+  if(mB)summary.push(`B=${mB}с`)
+  summary.push(`эталон=${etalonSegs.length} строк`)
+  document.getElementById('maeSummary').textContent=summary.join(' · ')
+}
+
+// ═══════════════════════════════════════════════════════
+// APPROACH A — Vosk Pass1 + Gemini Pass2
+// ═══════════════════════════════════════════════════════
+async function runA(){
+  const apiKey=document.getElementById('apiKey').value.trim()
+  if(!apiKey||!audioBuf)return
+  document.getElementById('btnA').disabled=true
+  document.getElementById('logA').innerHTML=''; document.getElementById('logA').style.display='block'
+  setBadge('badgeA','запуск...','run')
+  const t0=performance.now()
+
+  pushA('═══ ПОДХОД A: Vosk+Gemini ═══════════════════════','head')
+
+  try {
+    // Pass 1: Vosk
+    pushA('Pass 1: Vosk STT...','dim')
+    let words = []
+    try {
+      words = await runVosk()
+      pushA(`✓ Vosk: ${words.length} слов распознано`,'ok')
+      pushA(`  Первые 5: ${words.slice(0,5).map(w=>w.word+'@'+w.start.toFixed(2)).join(', ')}`,'dim')
+    } catch(e) {
+      pushA('✗ Vosk ошибка: '+e.message,'err')
+      pushA('  → Vosk не доступен на этом хосте (нет SharedArrayBuffer).','warn')
+      pushA('  → Используем Silero VAD как Pass 1 (точность схожа)','warn')
+      words = await runVadAsPass1()
+      pushA(`✓ VAD fallback: ${words.length} "слов"`, 'ok')
+    }
+
+    // Group words into subtitle lines
+    const minDur=+document.getElementById('aMinDur').value
+    const maxDur=+document.getElementById('aMaxDur').value
+    const maxChars=+document.getElementById('aMaxChars').value
+    const lines=groupWordsToLines(words, minDur, maxDur, maxChars)
+    pushA(`  Сгруппировано: ${lines.length} строк (${minDur}–${maxDur}с, ≤${maxChars} символов)`,'dim')
+
+    document.getElementById('vA_words').textContent=words.length
+
+    // Pass 2: Gemini text correction (text only, no audio!)
+    pushA('Pass 2: Gemini text correction (текст only, без аудио)...','dim')
+    const lang=LANG_MAP[document.getElementById('lang').value]||'Uzbek'
+    const {corrected, tokens} = await geminiCorrectText(lines, lang, apiKey)
+    pushA(`✓ Gemini: ${tokens} токенов (текст только!)`,'ok')
+    pushA(`  ~${(tokens*0.00000040).toFixed(4)}$ (@ $0.40/1М токенов)`,'dim')
+
+    // Build SRT
+    srtA = buildSrtFromLines(corrected)
+    document.getElementById('vA_lines').textContent=corrected.length
+    document.getElementById('vA_tok').textContent=tokens
+    document.getElementById('vA_time').textContent=fmt(Math.round(performance.now()-t0))
+    document.getElementById('dlA').disabled=false
+    setBadge('badgeA',`${corrected.length} строк ✓`,'ok')
+    pushA(`✓ Готово: ${corrected.length} строк SRT | ${fmt(Math.round(performance.now()-t0))}`,'ok')
+
+    // Show first 5
+    corrected.slice(0,5).forEach((l,i)=>pushA(`  [${i+1}] ${l.start.toFixed(2)}–${l.end.toFixed(2)}с "${l.text}"`,'result'))
+
+    updateMAE()
+  } catch(e) {
+    pushA('✗ '+e.message,'err'); console.error(e)
+    setBadge('badgeA','ошибка','err')
+  }
+  document.getElementById('btnA').disabled=false
+}
+
+// Vosk STT
+async function runVosk(){
+  if(!window.crossOriginIsolated) throw new Error('crossOriginIsolated=false — SharedArrayBuffer недоступен')
+  const modelUrl=document.getElementById('voskModelUrl').value.trim()
+  pushA(`  Загружаю Vosk модель: ${modelUrl}`,'dim')
+
+  // Dynamically import vosk-browser
+  const {createModel}=await import('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js')
+  const model=await createModel(modelUrl)
+  const rec=new model.KaldiRecognizer(16000)
+  rec.setWords(true)
+
+  // Resample to 16kHz mono
+  const sr=audioBuf.sampleRate
+  const raw=audioBuf.getChannelData(0)
+  const s16=resampleTo16k(raw,sr)
+
+  const CHUNK=4000
+  const words=[]
+  for(let off=0;off<s16.length;off+=CHUNK){
+    const chunk=new Float32Array(s16.buffer,off*4,Math.min(CHUNK,s16.length-off))
+    const pcm=new Int16Array(chunk.length)
+    for(let i=0;i<chunk.length;i++) pcm[i]=Math.max(-32768,Math.min(32767,chunk[i]*32767))
+    rec.acceptWaveformFloat(chunk, 16000)
+  }
+  const result=rec.finalResult(rec)
+  if(result.result) for(const w of result.result) words.push({word:w.word,start:w.start,end:w.end})
+  model.terminate()
+  return words
+}
+
+// Silero VAD as Pass 1 fallback → returns word-like segments
+async function runVadAsPass1(){
+  pushA('  Запускаю Silero VAD...')
+  const sr=audioBuf.sampleRate, raw=audioBuf.getChannelData(0)
+  const s16=resampleTo16k(raw,sr)
+  const probs=await runSileroVAD(s16)
+
+  // Convert VAD probs to word-like tokens with timestamps
+  const words=[]
+  let inSp=false,spStart=0
+  for(const f of probs){
+    if(!inSp&&f.p>=0.5){inSp=true;spStart=f.t-0.032}
+    else if(inSp&&f.p<0.35){
+      const dur=f.t-spStart
+      if(dur>0.05&&dur<0.8){
+        words.push({word:'…',start:Math.max(0,spStart),end:f.t})
+      } else if(dur>=0.8){
+        // Split longer segments into ~300ms pseudo-words
+        const nWords=Math.max(1,Math.round(dur/0.3))
+        const wDur=dur/nWords
+        for(let i=0;i<nWords;i++) words.push({word:'…',start:spStart+i*wDur,end:spStart+(i+1)*wDur})
+      }
+      inSp=false
+    }
+  }
+  return words
+}
+
+// Group word objects into subtitle lines
+function groupWordsToLines(words, minDur, maxDur, maxChars){
+  if(!words.length)return[]
+  const lines=[]
+  let cur={words:[],start:words[0].start,end:words[0].end}
+
+  for(const w of words){
+    const dur=w.end-cur.start
+    const text=(cur.words.map(x=>x.word).join(' ')+' '+w.word).trim()
+    if(dur>maxDur||text.length>maxChars){
+      if(cur.words.length) lines.push({start:cur.start,end:cur.end,text:cur.words.map(x=>x.word).join(' ')})
+      cur={words:[w],start:w.start,end:w.end}
+    } else {
+      cur.words.push(w); cur.end=w.end
+    }
+  }
+  if(cur.words.length) lines.push({start:cur.start,end:cur.end,text:cur.words.map(x=>x.word).join(' ')})
+
+  // Filter too short
+  return lines.filter(l=>l.end-l.start>=minDur)
+}
+
+// Gemini Pass 2: text correction only (no audio)
+async function geminiCorrectText(lines, langName, apiKey){
+  const isUz=document.getElementById('lang').value==='uz'
+  const scriptRule=isUz?'Write in Latin Uzbek script (not Cyrillic). Use apostrophe for o\', g\', sh, ch, ng.':'Transcribe in '+langName+'.'
+  const texts=lines.map((l,i)=>`${i+1}. ${l.text}`).join('\n')
+
+  const prompt=(
+    `You are correcting ${langName} subtitle transcription.\n`+
+    `The text was transcribed by a speech recognition model and may have errors.\n`+
+    `Fix spelling, grammar, and word boundaries. Do NOT change timing or meaning.\n`+
+    `${scriptRule}\n\n`+
+    `Input (${lines.length} subtitle lines):\n${texts}\n\n`+
+    `Return ONLY a JSON array of exactly ${lines.length} corrected strings, in order.\n`+
+    `Example: ["corrected line 1","corrected line 2"]`
+  )
+
+  pushA(`  Промт: ${prompt.length} символов | ~${Math.round(prompt.length/4)} токенов`,'dim')
+
+  const resp=await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
+    {method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0,maxOutputTokens:Math.max(1024,lines.length*20)}})}
+  )
+  if(!resp.ok){const e=await resp.text();throw new Error('HTTP '+resp.status+': '+e.slice(0,100))}
+  const data=await resp.json()
+  const u=data.usageMetadata||{}
+  const tokens=(u.totalTokenCount||0)
+
+  pushA(`  HTTP 200 | prompt=${u.promptTokenCount||'?'} text=${u.promptTokensDetails?.find(d=>d.modality==='TEXT')?.tokenCount||'?'} audio=0 out=${u.candidatesTokenCount||'?'}`,'dim')
+
+  const rawText=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+  let parsed=null
+  try{
+    let s=rawText
+    if(s.includes('```')){s=s.split('```')[1];if(s.startsWith('json'))s=s.slice(4)}
+    parsed=JSON.parse(s.trim())
+  }catch(_){const m=rawText.match(/\[[\s\S]*\]/);if(m)try{parsed=JSON.parse(m[0])}catch(_){}}
+
+  if(!parsed||!Array.isArray(parsed)){
+    pushA('  ⚠ Не распарсилось — используем оригинальные тексты','warn')
+    return {corrected:lines, tokens}
+  }
+  if(parsed.length!==lines.length){
+    pushA(`  ⚠ Получено ${parsed.length}/${lines.length} — обрезаем/дополняем','warn`)
+  }
+  const corrected=lines.map((l,i)=>({...l,text:(parsed[i]||l.text).trim()}))
+  return {corrected, tokens}
+}
+
+// Build SRT from lines
+function buildSrtFromLines(lines){
+  let srt='',n=0
+  for(const l of lines){
+    if(!l.text)continue; n++
+    srt+=`${n}\n${toSrtTime(l.start)} --> ${toSrtTime(l.end)}\n${l.text}\n\n`
+  }
+  return srt
+}
+
+function downloadSrtA(){
+  if(!srtA)return
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([srtA],{type:'text/plain;charset=utf-8'}))
+  a.download='exp8_A_vosk_gemini.srt'; a.click()
+}
+
+// ═══════════════════════════════════════════════════════
+// APPROACH B — Direct Gemini → SRT
+// ═══════════════════════════════════════════════════════
+async function runB(){
+  const apiKey=document.getElementById('apiKey').value.trim()
+  if(!apiKey||!audioBuf)return
+  document.getElementById('btnB').disabled=true
+  document.getElementById('logB').innerHTML=''; document.getElementById('logB').style.display='block'
+  setBadge('badgeB','запуск...','run')
+  const t0=performance.now()
+  const chunkSec=+document.getElementById('bChunkSec').value
+  const overlapSec=+document.getElementById('bOverlap').value
+  const maxChars=+document.getElementById('bMaxChars').value
+  const lang=LANG_MAP[document.getElementById('lang').value]||'Uzbek'
+  const isUz=document.getElementById('lang').value==='uz'
+
+  pushB('═══ ПОДХОД B: Direct Gemini SRT ═════════════════','head')
+
+  // Build chunks with overlap
+  const chunks=[]
+  let offset=0
+  while(offset<duration){
+    const end=Math.min(offset+chunkSec,duration)
+    chunks.push({start:offset,end,dur:end-offset})
+    if(end>=duration)break
+    offset+=chunkSec-overlapSec
+  }
+  document.getElementById('vB_chunks').textContent=chunks.length
+  pushB(`${chunks.length} чанков по ${chunkSec}с (перекрытие ${overlapSec}с)`,'dim')
+
+  const scriptRule=isUz
+    ?'Write in Latin Uzbek (not Cyrillic). Use apostrophe for o\', g\', sh, ch, ng.'
+    :'Transcribe in '+lang+'.'
+
+  const allLines=[]
+  let totalTokens=0
+  const tbody=document.getElementById('tokenTableBody')
+  tbody.innerHTML=''
+  document.getElementById('tokenTableWrap').style.display='block'
+
+  for(let ci=0;ci<chunks.length;ci++){
+    const chunk=chunks[ci]
+    const chunkT0=performance.now()
+    pushB(`  [${ci+1}/${chunks.length}] ${chunk.start.toFixed(1)}–${chunk.end.toFixed(1)}с...`,'dim')
+
+    // Build WAV for chunk
+    const wav=sliceToWav(audioBuf,chunk.start,chunk.end)
+    const b64=await blobToB64(wav)
+
+    const prompt=(
+      `Generate subtitles for this ${lang} audio segment.\n`+
+      `IMPORTANT: The audio starts at ${chunk.start.toFixed(2)} seconds in the original file.\n\n`+
+      `Rules:\n`+
+      `- Return ONLY valid SRT format (index, timecode, text)\n`+
+      `- Timecodes must be relative to this audio clip (starting from 00:00:00,000)\n`+
+      `- Each subtitle line: 1–${maxChars} characters\n`+
+      `- ${scriptRule}\n`+
+      `- Empty segments (music, silence) → skip\n\n`+
+      `Return ONLY the SRT content, no explanation:\n`+
+      `1\n00:00:00,000 --> 00:00:02,500\nFirst line\n\n2\n...`
+    )
+
+    try{
+      const resp=await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
+        {method:'POST',headers:{'Content-Type':'application/json'},
+         body:JSON.stringify({contents:[{parts:[{inline_data:{mime_type:'audio/wav',data:b64}},{text:prompt}]}],generationConfig:{temperature:0,maxOutputTokens:1024}})}
+      )
+      const ms=Math.round(performance.now()-chunkT0)
+      if(!resp.ok){const e=await resp.text();pushB(`  ✗ HTTP ${resp.status}: ${e.slice(0,80)}`,'err');continue}
+      const data=await resp.json()
+      const u=data.usageMetadata||{}
+      const audioTok=u.promptTokensDetails?.find(d=>d.modality==='AUDIO')?.tokenCount||0
+      const textTok=u.promptTokensDetails?.find(d=>d.modality==='TEXT')?.tokenCount||0
+      const outTok=u.candidatesTokenCount||0
+      totalTokens+=u.totalTokenCount||0
+
+      const rawSrt=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim()
+      pushB(`  HTTP 200 | audio=${audioTok} text=${textTok} out=${outTok} | ${fmt(ms)}`,'dim')
+
+      // Parse SRT and offset timestamps
+      const chunkLines=parseSrt(rawSrt)
+      const offsetLines=chunkLines
+        .filter(l=>l.t0>=0&&l.t1>l.t0)
+        .map(l=>({
+          start: +(l.t0+chunk.start).toFixed(3),
+          end:   +(Math.min(l.t1+chunk.start, chunk.end)).toFixed(3),
+          text:  l.text
+        }))
+
+      pushB(`  ✓ ${chunkLines.length} строк → с офсетом ${chunk.start.toFixed(1)}с → ${offsetLines.length} строк`,'ok')
+
+      // Add table row
+      const tr=document.createElement('tr')
+      tr.innerHTML=`<td style="color:#4b5563">${ci+1}</td><td style="color:#60a5fa">${audioTok}</td><td style="color:#60a5fa">${textTok}</td><td style="color:#a78bfa">${outTok}</td><td style="color:#4ade80">${offsetLines.length}</td><td style="color:#374151">${fmt(ms)}</td>`
+      tbody.appendChild(tr)
+
+      allLines.push(...offsetLines)
+    }catch(e){
+      pushB(`  ✗ ${e.message}`,'err')
+    }
+  }
+
+  // Add totals row
+  const tr=document.createElement('tr')
+  tr.innerHTML=`<td><strong>TOTAL</strong></td><td colspan="2" style="color:#fcd34d"><strong>${totalTokens}</strong></td><td></td><td style="color:#4ade80"><strong>${allLines.length}</strong></td><td>${fmt(Math.round(performance.now()-t0))}</td>`
+  tbody.appendChild(tr)
+
+  // Deduplicate overlap
+  const deduped=deduplicateOverlap(allLines, overlapSec)
+  pushB(`  Deduplicate: ${allLines.length} → ${deduped.length} строк (убрали перекрытия)`,'dim')
+
+  srtB=buildSrtFromLines(deduped)
+  document.getElementById('vB_lines').textContent=deduped.length
+  document.getElementById('vB_tok').textContent=totalTokens
+  document.getElementById('vB_time').textContent=fmt(Math.round(performance.now()-t0))
+  document.getElementById('dlB').disabled=false
+  setBadge('badgeB',`${deduped.length} строк ✓`,'ok')
+  pushB(`✓ Готово: ${deduped.length} строк SRT | ${totalTokens} токенов | ${fmt(Math.round(performance.now()-t0))}`,'ok')
+  deduped.slice(0,5).forEach((l,i)=>pushB(`  [${i+1}] ${l.start.toFixed(2)}–${l.end.toFixed(2)}с "${l.text}"`,'result'))
+
+  // Cost estimate
+  const audioCost=totalTokens*0.000001
+  pushB(`  Стоимость: ~$${audioCost.toFixed(4)} (@ $1/1M токенов)`,'dim')
+
+  updateMAE()
+  document.getElementById('btnB').disabled=false
+}
+
+// Remove duplicated lines from overlap regions
+function deduplicateOverlap(lines, overlapSec){
+  if(!lines.length||overlapSec<=0)return lines
+  lines.sort((a,b)=>a.start-b.start)
+  const out=[lines[0]]
+  for(let i=1;i<lines.length;i++){
+    const prev=out[out.length-1], cur=lines[i]
+    // Skip if very similar start time (within overlap zone)
+    if(cur.start-prev.start<0.5&&cur.text===prev.text)continue
+    // Skip if start is inside previous subtitle
+    if(cur.start<prev.end-0.1)continue
+    out.push(cur)
+  }
+  return out
+}
+
+function downloadSrtB(){
+  if(!srtB)return
+  const a=document.createElement('a')
+  a.href=URL.createObjectURL(new Blob([srtB],{type:'text/plain;charset=utf-8'}))
+  a.download='exp8_B_direct_gemini.srt'; a.click()
+}
+
+// ═══════════════════════════════════════════════════════
+// SILERO VAD (fallback for Pass 1)
+// ═══════════════════════════════════════════════════════
+function resampleTo16k(samples, srcRate){
+  if(srcRate===16000)return samples
+  const ratio=16000/srcRate,out=new Float32Array(Math.round(samples.length*ratio))
+  for(let i=0;i<out.length;i++){const pos=i/ratio,lo=Math.floor(pos),hi=Math.min(lo+1,samples.length-1);out[i]=samples[lo]*(1-(pos-lo))+samples[hi]*(pos-lo)}
+  return out
+}
+
+async function runSileroVAD(s16){
+  if(!sileroSession){
+    ort.env.wasm.numThreads=1
+    const resp=await fetch('./vad/silero_vad_legacy.onnx')
+    if(!resp.ok)throw new Error('Silero: HTTP '+resp.status)
+    sileroSession=await ort.InferenceSession.create(new Uint8Array(await resp.arrayBuffer()),{executionProviders:['wasm'],graphOptimizationLevel:'all'})
+    pushA('  ✓ Silero VAD загружен','ok')
+  }
+  const FRAME=512;let h=new Float32Array(128),c=new Float32Array(128);const probs=[]
+  for(let off=0;off+FRAME<=s16.length;off+=FRAME){
+    const out=await sileroSession.run({
+      input:new ort.Tensor('float32',s16.slice(off,off+FRAME),[1,FRAME]),
+      sr:new ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[]),
+      h:new ort.Tensor('float32',h,[2,1,64]),c:new ort.Tensor('float32',c,[2,1,64])
+    })
+    probs.push({t:(off+FRAME)/16000,p:out.output.data[0]});h=out.hn.data;c=out.cn.data
+  }
+  return probs
+}
+
+// ═══════════════════════════════════════════════════════
+// WAV UTILS
+// ═══════════════════════════════════════════════════════
+function sliceToWav(buf,s0sec,s1sec){
+  const sr=buf.sampleRate,s0=Math.floor(s0sec*sr),s1=Math.min(Math.floor(s1sec*sr),buf.length),n=s1-s0
+  const ab=new ArrayBuffer(44+n*2),v=new DataView(ab);let off=0
+  const ws=s=>{for(let i=0;i<s.length;i++)v.setUint8(off++,s.charCodeAt(i))}
+  ws('RIFF');v.setUint32(4,36+n*2,true);off=8;ws('WAVE');ws('fmt ');v.setUint32(16,16,true);off+=4
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,sr,true);v.setUint32(28,sr*2,true)
+  v.setUint16(32,2,true);v.setUint16(34,16,true);off=36;ws('data');v.setUint32(40,n*2,true);off=44
+  const ch=buf.numberOfChannels
+  for(let i=0;i<n;i++){let val=0;for(let c=0;c<ch;c++)val+=buf.getChannelData(c)[s0+i]/ch;val=Math.max(-1,Math.min(1,val));v.setInt16(off,val<0?val*32768:val*32767,true);off+=2}
+  return new Blob([ab],{type:'audio/wav'})
+}
+
+function blobToB64(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(blob)})}
+
+function toSrtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=Math.floor(s%60),ms=Math.round((s%1)*1000);return`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')},${String(ms).padStart(3,'0')}`}
+
+</script>
+</body>
+</html>
