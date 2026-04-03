@@ -126,9 +126,15 @@ input[type=password]:focus,input[type=text]:focus{border-color:#38bdf8}
       <strong style="color:#4ade80">Токены: минимальные</strong> — только текст, без аудио
     </div>
 
-    <div class="row">
-      <div class="lbl">МОДЕЛЬ VOSK</div>
-      <input type="text" id="voskModelUrl" value="./vosk-model-small-uz/" placeholder="URL или путь к модели">
+    <div class="row" style="align-items:flex-start;flex-direction:column;gap:6px">
+      <div style="font-size:10px;color:#374151;line-height:1.7">
+        Vosk модель (.zip): скачай <a href="https://alphacephei.com/vosk/models" target="_blank" style="color:#38bdf8">alphacephei.com/vosk/models</a><br>
+        Рекомендуется <strong style="color:#e2e8f0">vosk-model-small-uz-0.22.zip</strong> (~41MB) для узбекского
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;width:100%">
+        <input type="file" id="voskModelFile" accept=".zip,.tar.gz" style="flex:1;font-size:11px;color:#e2e8f0;background:#0d1520;border:1px solid #111827;border-radius:6px;padding:6px 9px;cursor:pointer">
+        <span id="voskModelStatus" style="font-size:10px;color:#374151;white-space:nowrap">не загружена</span>
+      </div>
     </div>
     <div class="ctrl-row">
       <div class="ctrl"><label>МИН. ДУР СТРОКИ</label>
@@ -430,7 +436,8 @@ async function runA(){
     try {
       words = await runVosk()
       pushA(`✓ Vosk: ${words.length} слов распознано`,'ok')
-      pushA(`  Первые 5: ${words.slice(0,5).map(w=>w.word+'@'+w.start.toFixed(2)).join(', ')}`,'dim')
+      const sample=words.slice(0,8).map(w=>`"${w.word}"@${w.start.toFixed(2)}s`).join(' ')
+    pushA(`  Первые слова: ${sample}`,'dim')
     } catch(e) {
       pushA('✗ Vosk ошибка: '+e.message,'err')
       pushA('  → Vosk не доступен на этом хосте (нет SharedArrayBuffer).','warn')
@@ -476,33 +483,80 @@ async function runA(){
 }
 
 // Vosk STT
+// Vosk model file storage
+let voskModelFile = null
+
+document.addEventListener('DOMContentLoaded', () => {
+  const fi = document.getElementById('voskModelFile')
+  if (fi) fi.addEventListener('change', () => {
+    voskModelFile = fi.files[0] || null
+    const st = document.getElementById('voskModelStatus')
+    if (voskModelFile) {
+      st.textContent = `✓ ${voskModelFile.name} (${(voskModelFile.size/1024/1024).toFixed(1)}MB)`
+      st.style.color = '#4ade80'
+    } else {
+      st.textContent = 'не загружена'
+      st.style.color = '#374151'
+    }
+  })
+})
+
 async function runVosk(){
-  if(!window.crossOriginIsolated) throw new Error('crossOriginIsolated=false — SharedArrayBuffer недоступен')
-  const modelUrl=document.getElementById('voskModelUrl').value.trim()
-  pushA(`  Загружаю Vosk модель: ${modelUrl}`,'dim')
+  if(!voskModelFile) throw new Error('Модель не загружена — выбери .zip файл')
 
-  // Dynamically import vosk-browser
-  const {createModel}=await import('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js')
-  const model=await createModel(modelUrl)
-  const rec=new model.KaldiRecognizer(16000)
-  rec.setWords(true)
+  pushA(`  Загружаю Vosk модель из файла: ${voskModelFile.name} (${(voskModelFile.size/1024/1024).toFixed(1)}MB)`,'dim')
 
-  // Resample to 16kHz mono
-  const sr=audioBuf.sampleRate
-  const raw=audioBuf.getChannelData(0)
-  const s16=resampleTo16k(raw,sr)
+  // Create blob URL from uploaded file — works without server
+  const blobUrl = URL.createObjectURL(voskModelFile)
+  let model, words = []
 
-  const CHUNK=4000
-  const words=[]
-  for(let off=0;off<s16.length;off+=CHUNK){
-    const chunk=new Float32Array(s16.buffer,off*4,Math.min(CHUNK,s16.length-off))
-    const pcm=new Int16Array(chunk.length)
-    for(let i=0;i<chunk.length;i++) pcm[i]=Math.max(-32768,Math.min(32767,chunk[i]*32767))
-    rec.acceptWaveformFloat(chunk, 16000)
+  try {
+    pushA('  Импорт vosk-browser...','dim')
+    const {createModel} = await import('https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js')
+    pushA('  Инициализация модели (первый раз ~10–30с)...','dim')
+    model = await createModel(blobUrl)
+    pushA('  ✓ Модель загружена','ok')
+
+    const rec = new model.KaldiRecognizer(16000)
+    rec.setWords(true)
+
+    // Resample to 16kHz mono
+    const sr = audioBuf.sampleRate
+    const raw = audioBuf.getChannelData(0)
+    const s16 = resampleTo16k(raw, sr)
+
+    // Process in chunks, showing progress
+    const CHUNK = 8000  // ~0.5s at 16kHz
+    const total = s16.length
+    let processed = 0
+    pushA(`  Распознавание: ${(total/16000).toFixed(1)}с аудио...`,'dim')
+
+    for(let off = 0; off < s16.length; off += CHUNK){
+      const chunk = s16.slice(off, Math.min(off + CHUNK, s16.length))
+      rec.acceptWaveformFloat(chunk, 16000)
+      processed += chunk.length
+      if(Math.floor(processed/total*10) !== Math.floor((processed-chunk.length)/total*10)){
+        pushA(`  ... ${Math.round(processed/total*100)}%`,'dim')
+      }
+    }
+
+    const result = rec.finalResult(rec)
+    pushA(`  Raw result keys: ${Object.keys(result).join(', ')}`,'dim')
+
+    if(result.result){
+      for(const w of result.result) words.push({word:w.word, start:w.start, end:w.end})
+    } else if(result.text) {
+      // Fallback: no word timestamps — distribute evenly
+      pushA('  ⚠ Vosk вернул текст без таймкодов — распределяем равномерно','warn')
+      const toks = result.text.split(' ').filter(Boolean)
+      const dur = audioBuf.duration / toks.length
+      toks.forEach((word,i) => words.push({word, start:i*dur, end:(i+1)*dur}))
+    }
+
+    model.terminate()
+  } finally {
+    URL.revokeObjectURL(blobUrl)
   }
-  const result=rec.finalResult(rec)
-  if(result.result) for(const w of result.result) words.push({word:w.word,start:w.start,end:w.end})
-  model.terminate()
   return words
 }
 
