@@ -439,11 +439,15 @@ async function runA(){
       const sample=words.slice(0,8).map(w=>`"${w.word}"@${w.start.toFixed(2)}s`).join(' ')
     pushA(`  Первые слова: ${sample}`,'dim')
     } catch(e) {
-      pushA('✗ Vosk ошибка: '+e.message,'err')
-      pushA('  → Vosk не доступен на этом хосте (нет SharedArrayBuffer).','warn')
-      pushA('  → Используем Silero VAD как Pass 1 (точность схожа)','warn')
-      words = await runVadAsPass1()
-      pushA(`✓ VAD fallback: ${words.length} "слов"`, 'ok')
+      pushA('✗ Vosk: '+e.message,'err')
+      if(e.message.includes('не загружена')){
+        pushA('  → Загрузи vosk-model-small-uz-0.22.zip через окно выше','warn')
+      } else {
+        pushA('  → Проверь модель и попробуй снова','warn')
+      }
+      setBadge('badgeA','нет модели','err')
+      document.getElementById('btnA').disabled=false
+      return
     }
 
     // Group words into subtitle lines
